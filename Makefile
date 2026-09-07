@@ -19,6 +19,10 @@ AAZTweakManager_CFLAGS = -fobjc-arc -Wall -Wextra \
 AAZTweakManager_FRAMEWORKS = UIKit Foundation
 AAZTweakManager_LIBRARIES = z
 AAZTweakManager_CODESIGN_FLAGS = -SResources/AAZTweakManager.entitlements
+AAZTweakManager_RESOURCE_FILES = \
+	Resources/AppIcon60x60.png \
+	Resources/AppIcon60x60@2x.png \
+	Resources/AppIcon60x60@3x.png
 
 include $(THEOS_MAKE_PATH)/application.mk
 

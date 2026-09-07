@@ -149,6 +149,6 @@ static NSString *ATMRunDPKGDebField(ATMEnvironment *environment, NSURL *debURL) 
     }
     return @{ @"missing": missing, @"differentVersion": different, @"alreadyInstalled": present,
               @"packagePayloadUnavailable": unavailable, @"sourceCount": @([manifest[@"sources"] count]),
-              @"safeToExecute": @NO, @"reason": @"Beta 1 provides preview only; no package transaction is executed." };
+              @"safeToExecute": @NO, @"reason": @"This beta provides preview only; no package transaction is executed." };
 }
 @end

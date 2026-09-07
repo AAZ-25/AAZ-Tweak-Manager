@@ -38,8 +38,9 @@ jobs:
           DEB="$(find packages -name '*.deb' -type f | head -n 1)"
           test -n "$DEB"
           test "$(dpkg-deb -f "$DEB" Package)" = "com.aaz.tweakmanager"
-          test "$(dpkg-deb -f "$DEB" Version)" = "0.1.0~beta1"
+          test "$(dpkg-deb -f "$DEB" Version)" = "0.1.0~beta2"
           dpkg-deb -c "$DEB" | grep -q 'AAZTweakManager.app/AAZTweakManager'
+          dpkg-deb -c "$DEB" | grep -q 'AAZTweakManager.app/AppIcon60x60@3x.png'
           cp "$DEB" AAZ-Tweak-Manager-rootless.deb
           shasum -a 256 AAZ-Tweak-Manager-rootless.deb
       - name: Upload

@@ -86,8 +86,9 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
     BOOL showExcluded = [NSUserDefaults.standardUserDefaults boolForKey:ATMShowExcludedKey];
     if (showExcluded) self.visiblePackages = model.packages;
     else self.visiblePackages = [model.packages filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(ATMPackageRecord *record, NSDictionary *bindings) { (void)bindings; return record.personalCandidate || [model.ledger isSelectedPackageID:record.packageID]; }]];
+    NSUInteger personalCount = [[model.packages filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(ATMPackageRecord *record, NSDictionary *bindings) { (void)bindings; return record.personalCandidate; }]] count];
     [self.tableView reloadData];
-    self.navigationItem.prompt = model.environment.supportedRootless ? [NSString stringWithFormat:@"%lu personal candidates", (unsigned long)self.visiblePackages.count] : @"Unsupported or unavailable rootless package database";
+    self.navigationItem.prompt = model.environment.supportedRootless && !model.scanError ? [NSString stringWithFormat:@"%lu personal • %lu installed", (unsigned long)personalCount, (unsigned long)model.packages.count] : @"Rootless package database unavailable";
 }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { (void)tableView; return 1; }
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { (void)tableView; (void)section; return self.visiblePackages.count ?: 1; }
@@ -99,8 +100,8 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     if (!self.visiblePackages.count) {
         UITableViewCell *empty = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
-        empty.textLabel.text = ATMAppModel.shared.scanError ? @"Package database unavailable" : @"No personal packages found";
-        empty.detailTextLabel.text = ATMAppModel.shared.scanError.localizedDescription ?: @"Pull to scan again.";
+        empty.textLabel.text = ATMAppModel.shared.scanError ? @"Package database unavailable" : @"No personal packages inferred";
+        empty.detailTextLabel.text = ATMAppModel.shared.scanError.localizedDescription ?: [NSString stringWithFormat:@"%lu installed packages were read. Turn on Show Excluded Packages in Settings to review the classification.", (unsigned long)ATMAppModel.shared.packages.count];
         empty.selectionStyle = UITableViewCellSelectionStyleNone; return empty;
     }
     UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"package"];
@@ -120,7 +121,7 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
     [ATMAppModel.shared.ledger recordEvent:sender.isOn ? @"package-selected" : @"package-unselected" packageID:sender.packageID details:nil];
 }
 - (void)createBackup {
-    if (!ATMAppModel.shared.environment.supportedRootless) { ATMShowError(self, @"Backup unavailable", ATMAppModel.shared.scanError ?: [NSError errorWithDomain:@"ATM" code:1 userInfo:@{NSLocalizedDescriptionKey: @"Rootless APT data is unavailable."}]); return; }
+    if (!ATMAppModel.shared.environment.supportedRootless || ATMAppModel.shared.scanError || !ATMAppModel.shared.packages.count) { ATMShowError(self, @"Backup unavailable", ATMAppModel.shared.scanError ?: [NSError errorWithDomain:@"ATM" code:1 userInfo:@{NSLocalizedDescriptionKey: @"No installed package inventory is available. An empty backup will not be created."}]); return; }
     self.navigationItem.rightBarButtonItem.enabled = NO;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         NSError *error = nil;
@@ -157,7 +158,7 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
 - (void)dealloc { [NSNotificationCenter.defaultCenter removeObserver:self]; }
 - (void)reloadData { self.backups = ATMAppModel.shared.backupManager.availableBackups; [self.tableView reloadData]; }
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { (void)tableView; (void)section; return self.backups.count ?: 1; }
-- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section { (void)tableView; (void)section; return @"Beta 1 validates and previews restoration. It does not execute package installation or removal."; }
+- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section { (void)tableView; (void)section; return @"This beta validates and previews restoration. It does not execute package installation or removal."; }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"backup"] ?: [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:@"backup"];
     if (!self.backups.count) { cell.textLabel.text = @"No backups yet"; cell.detailTextLabel.text = @"Create one from My Tweaks."; cell.accessoryType = UITableViewCellAccessoryNone; return cell; }
@@ -170,7 +171,7 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
     [tableView deselectRowAtIndexPath:indexPath animated:YES]; if (!self.backups.count) return;
     NSError *error = nil; NSDictionary *preview = [ATMAppModel.shared.backupManager restorePreviewForBackup:self.backups[indexPath.row] installedPackages:ATMAppModel.shared.packages error:&error];
     if (!preview.count) { ATMShowError(self, @"Invalid backup", error); return; }
-    NSString *message = [NSString stringWithFormat:@"Missing: %@\nDifferent version: %@\nAlready installed: %@\nUnavailable DEBs: %@\nSources: %@\n\nNo changes will be made in Beta 1.", preview[@"missing"], preview[@"differentVersion"], preview[@"alreadyInstalled"], preview[@"packagePayloadUnavailable"], preview[@"sourceCount"]];
+    NSString *message = [NSString stringWithFormat:@"Missing: %@\nDifferent version: %@\nAlready installed: %@\nUnavailable DEBs: %@\nSources: %@\n\nNo changes will be made by this beta.", preview[@"missing"], preview[@"differentVersion"], preview[@"alreadyInstalled"], preview[@"packagePayloadUnavailable"], preview[@"sourceCount"]];
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Restore Preview" message:message preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"Close" style:UIAlertActionStyleCancel handler:nil]];
     [alert addAction:[UIAlertAction actionWithTitle:@"Share Backup" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) { [self shareURL:self.backups[indexPath.row]]; }]];
@@ -238,7 +239,7 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { (void)tableView; return 2; }
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { (void)tableView; return section == 0 ? 1 : 3; }
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section { (void)tableView; return section == 0 ? @"Inventory" : @"Safety"; }
-- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section { (void)tableView; return section == 1 ? @"AAZ Tweak Manager Beta 1 never transmits package, source, device, or account data and does not execute restore transactions." : nil; }
+- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section { (void)tableView; return section == 1 ? @"AAZ Tweak Manager never transmits package, source, device, or account data and this beta does not execute restore transactions." : nil; }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil]; cell.selectionStyle = UITableViewCellSelectionStyleNone;
     if (indexPath.section == 0) {
@@ -246,7 +247,7 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
         UISwitch *toggle = [UISwitch new]; toggle.on = [NSUserDefaults.standardUserDefaults boolForKey:ATMShowExcludedKey]; [toggle addTarget:self action:@selector(showExcludedChanged:) forControlEvents:UIControlEventValueChanged]; cell.accessoryView = toggle;
     } else {
         NSArray *titles = @[@"Rootless only", @"Credentials excluded", @"Restore preview only"];
-        NSArray *details = @[@"Beta 1 reads the /var/jb APT and dpkg state.", @"auth.conf and embedded URL credentials are not exported.", @"No package installation, removal, or source write occurs."];
+        NSArray *details = @[@"Reads the /var/jb APT and dpkg state.", @"auth.conf and embedded URL credentials are not exported.", @"No package installation, removal, or source write occurs."];
         cell.textLabel.text = titles[indexPath.row]; cell.detailTextLabel.text = details[indexPath.row]; cell.detailTextLabel.numberOfLines = 2; cell.imageView.image = [UIImage systemImageNamed:@"checkmark.shield"];
     }
     return cell;

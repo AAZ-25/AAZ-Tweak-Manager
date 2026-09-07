@@ -2,7 +2,7 @@
 
 AAZ Tweak Manager is a rootless jailbreak app for reviewing and backing up packages that the user intentionally installed through APT frontends such as Sileo and Zebra.
 
-## Beta 1 scope
+## Current beta scope
 
 - Shows manually installed package candidates while excluding automatic dependencies, essential packages, and protected bootstrap components.
 - Lets the user correct the inferred personal-package selection. Confirmed choices are kept in a private local ledger.
@@ -12,7 +12,7 @@ AAZ Tweak Manager is a rootless jailbreak app for reviewing and backing up packa
 - Lists and shares backups and requires confirmation before deleting one.
 - Validates a backup and shows a restore preview.
 
-Beta 1 intentionally does not install, remove, or restore packages. Restore execution will be added only after archive, compatibility, dependency, and transaction behavior are verified on a real jailbroken device.
+The current beta intentionally does not install, remove, or restore packages. Restore execution will be added only after archive, compatibility, dependency, and transaction behavior are verified on a real jailbroken device.
 
 ## Compatibility
 
@@ -21,7 +21,7 @@ Beta 1 intentionally does not install, remove, or restore packages. Restore exec
 - Sileo or Zebra backed by APT/dpkg
 - `iphoneos-arm64`
 
-Rootful and roothide environments are not supported by Beta 1.
+Rootful and roothide environments are not supported by the current beta.
 
 ## Backup contents
 

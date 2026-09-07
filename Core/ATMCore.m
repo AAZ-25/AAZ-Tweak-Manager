@@ -55,13 +55,24 @@ NSDictionary<NSString *, NSString *> *ATMParseDebianParagraph(NSString *paragrap
 
 NSArray<NSDictionary<NSString *, NSString *> *> *ATMParseDebianParagraphs(NSString *contents) {
     NSString *normalized = [[contents stringByReplacingOccurrencesOfString:@"\r\n" withString:@"\n"] stringByReplacingOccurrencesOfString:@"\r" withString:@"\n"];
-    NSArray *raw = [normalized componentsSeparatedByString:@"\n\n"];
     NSMutableArray *result = [NSMutableArray array];
-    for (NSString *paragraph in raw) {
-        if (![paragraph stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].length) continue;
+    NSMutableString *paragraph = [NSMutableString string];
+    void (^appendParagraph)(void) = ^{
+        if (!paragraph.length) return;
         NSDictionary *fields = ATMParseDebianParagraph(paragraph);
         if (fields.count) [result addObject:fields];
-    }
+        [paragraph setString:@""];
+    };
+    [normalized enumerateLinesUsingBlock:^(NSString *line, BOOL *stop) {
+        (void)stop;
+        if (![line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet].length) {
+            appendParagraph();
+            return;
+        }
+        if (paragraph.length) [paragraph appendString:@"\n"];
+        [paragraph appendString:line];
+    }];
+    appendParagraph();
     return result;
 }
 
@@ -100,8 +111,23 @@ NSArray<NSDictionary<NSString *, NSString *> *> *ATMParseDebianParagraphs(NSStri
     NSString *root = [fm fileExistsAtPath:@"/var/jb"] ? @"/var/jb" : @"";
     environment.jailbreakRoot = root;
     NSArray *statusCandidates = root.length ? @[[root stringByAppendingString:@"/Library/dpkg/status"], [root stringByAppendingString:@"/var/lib/dpkg/status"]] : @[];
-    NSString *status = statusCandidates.firstObject ?: @"";
-    for (NSString *candidate in statusCandidates) if ([fm isReadableFileAtPath:candidate]) { status = candidate; break; }
+    NSString *status = @"";
+    NSUInteger bestInstalledCount = 0;
+    for (NSString *candidate in statusCandidates) {
+        if (![fm isReadableFileAtPath:candidate]) continue;
+        NSString *contents = [NSString stringWithContentsOfFile:candidate encoding:NSUTF8StringEncoding error:nil] ?: @"";
+        NSUInteger installedCount = 0;
+        for (NSDictionary *fields in ATMParseDebianParagraphs(contents)) {
+            NSArray *words = [fields[@"Status"] componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+            NSMutableArray *tokens = [NSMutableArray array];
+            for (NSString *word in words) if (word.length) [tokens addObject:word.lowercaseString];
+            if (tokens.count >= 2 && [tokens containsObject:@"ok"] && [tokens.lastObject isEqualToString:@"installed"]) installedCount++;
+        }
+        if (!status.length || installedCount > bestInstalledCount) {
+            status = candidate;
+            bestInstalledCount = installedCount;
+        }
+    }
     environment.dpkgStatusPath = status;
     environment.aptStatePath = [root stringByAppendingString:@"/var/lib/apt/extended_states"];
     environment.aptCachePath = [root stringByAppendingString:@"/var/cache/apt/archives"];
@@ -148,6 +174,13 @@ static NSDictionary<NSString *, NSNumber *> *ATMAutomaticStates(NSString *path) 
         if (packageID.length) states[packageID] = @([fields[@"Auto-Installed"] integerValue] == 1);
     }
     return states;
+}
+
+static BOOL ATMStatusIsInstalled(NSString *status) {
+    NSArray *words = [status componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSMutableArray *tokens = [NSMutableArray array];
+    for (NSString *word in words) if (word.length) [tokens addObject:word.lowercaseString];
+    return tokens.count >= 2 && [tokens containsObject:@"ok"] && [tokens.lastObject isEqualToString:@"installed"];
 }
 
 static NSDictionary<NSString *, NSDate *> *ATMInstallDates(NSString *logDirectory) {
@@ -205,7 +238,7 @@ static NSString *ATMSanitizeSourceText(NSString *text, BOOL *didRedact) {
     NSSet *protected = ATMProtectedPackages();
     NSMutableArray *records = [NSMutableArray array];
     for (NSDictionary *fields in ATMParseDebianParagraphs(statusText)) {
-        if (![fields[@"Status"] isEqualToString:@"install ok installed"]) continue;
+        if (!ATMStatusIsInstalled(fields[@"Status"] ?: @"")) continue;
         NSString *packageID = fields[@"Package"] ?: @"";
         if (!packageID.length) continue;
         ATMPackageRecord *record = [ATMPackageRecord new];
@@ -231,6 +264,10 @@ static NSString *ATMSanitizeSourceText(NSString *text, BOOL *didRedact) {
         record.installedAt = dates[packageID];
         record.dateConfidence = record.installedAt ? ATMInstallDateConfidenceLogExact : ATMInstallDateConfidenceUnknown;
         [records addObject:record];
+    }
+    if (!records.count) {
+        if (error) *error = [NSError errorWithDomain:ATMErrorDomain code:21 userInfo:@{NSLocalizedDescriptionKey: @"The package database was found, but no installed package records could be decoded."}];
+        return @[];
     }
     [records sortUsingComparator:^NSComparisonResult(ATMPackageRecord *a, ATMPackageRecord *b) { return [a.name localizedCaseInsensitiveCompare:b.name]; }];
     return records;

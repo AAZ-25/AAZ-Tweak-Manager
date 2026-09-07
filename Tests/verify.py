@@ -7,7 +7,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 required = [
     "Makefile", "control", "Resources/Info.plist",
-    "Resources/AAZTweakManager.entitlements", "main.m",
+    "Resources/AAZTweakManager.entitlements", "Resources/AppIcon60x60.png",
+    "Resources/AppIcon60x60@2x.png", "Resources/AppIcon60x60@3x.png", "main.m",
     "App/ATMAppDelegate.m", "App/ATMViewControllers.m",
     "Core/ATMCore.m", "Core/ATMBackupManager.m", "Core/ATMZipWriter.m",
 ]
@@ -18,11 +19,13 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
+assert info["CFBundleVersion"] == "2"
+assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["AppIcon60x60"]
 
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta1" in control
+assert "Version: 0.1.0~beta2" in control
 
 excluded_directories = {".git", ".theos-build", "packages"}
 public_files = [
