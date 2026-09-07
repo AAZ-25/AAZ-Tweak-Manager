@@ -85,6 +85,12 @@ assert "Backup Changes" in all_text
 assert "Selection Profiles" in all_text
 assert "Search backups" in all_text
 assert "Pin" in all_text and "Unpin" in all_text
+assert "#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>" in all_text
+assert "initForOpeningContentTypes:types asCopy:YES" in all_text
+assert "initWithDocumentTypes:" not in all_text
+assert "UIDocumentPickerModeImport" not in all_text
+assert "for (NSUInteger index = 0; index < titles.count; index++)" in all_text
+assert "Security UniformTypeIdentifiers" in (ROOT / "Makefile").read_text()
 assert "Restore execution is not included" in all_text or "Nothing is restored" in all_text
 assert '@"architecture": @"iphoneos-arm64"' in all_text
 assert '@"jailbreakPrefix"' not in (ROOT / "Core/ATMBackupManager.m").read_text()
