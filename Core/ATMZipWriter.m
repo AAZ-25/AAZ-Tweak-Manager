@@ -154,3 +154,62 @@ NSData *ATMReadStoredZipEntry(NSURL *archiveURL, NSString *entryPath, NSError **
     if (error) *error = [NSError errorWithDomain:ATMZipErrorDomain code:6 userInfo:@{NSLocalizedDescriptionKey: @"Backup manifest is missing."}];
     return nil;
 }
+
+NSArray<NSDictionary *> *ATMValidateStoredZipArchive(NSURL *archiveURL, NSError **error) {
+    NSData *archive = [NSData dataWithContentsOfURL:archiveURL options:NSDataReadingMappedIfSafe error:error];
+    if (archive.length < 22) return nil;
+    const uint8_t *bytes = archive.bytes;
+    NSUInteger offset = 0;
+    NSMutableArray<NSDictionary *> *entries = [NSMutableArray array];
+    NSMutableSet<NSString *> *paths = [NSMutableSet set];
+    while (offset + 30 <= archive.length && ATMReadUInt32(bytes + offset) == 0x04034b50) {
+        uint16_t flags = ATMReadUInt16(bytes + offset + 6);
+        uint16_t method = ATMReadUInt16(bytes + offset + 8);
+        uint32_t expectedCRC = ATMReadUInt32(bytes + offset + 14);
+        uint32_t compressedSize = ATMReadUInt32(bytes + offset + 18);
+        uint32_t size = ATMReadUInt32(bytes + offset + 22);
+        uint16_t nameLength = ATMReadUInt16(bytes + offset + 26);
+        uint16_t extraLength = ATMReadUInt16(bytes + offset + 28);
+        NSUInteger nameOffset = offset + 30;
+        NSUInteger dataOffset = nameOffset + nameLength + extraLength;
+        if ((flags & 0x08) || method != 0 || compressedSize != size || dataOffset > archive.length || size > archive.length - dataOffset) break;
+        NSData *nameData = [archive subdataWithRange:NSMakeRange(nameOffset, nameLength)];
+        NSString *name = [[NSString alloc] initWithData:nameData encoding:NSUTF8StringEncoding];
+        if (!name.length || [name hasPrefix:@"/"] || [name containsString:@".."] || [paths containsObject:name]) break;
+        uLong actualCRC = crc32(0L, Z_NULL, 0);
+        actualCRC = crc32(actualCRC, bytes + dataOffset, (uInt)size);
+        if ((uint32_t)actualCRC != expectedCRC) break;
+        [paths addObject:name];
+        [entries addObject:@{ @"path": name, @"size": @(size), @"crc32": @(expectedCRC), @"offset": @(offset) }];
+        offset = dataOffset + size;
+    }
+    if (!entries.count || offset + 46 > archive.length || ATMReadUInt32(bytes + offset) != 0x02014b50) {
+        if (error) *error = [NSError errorWithDomain:ATMZipErrorDomain code:10 userInfo:@{NSLocalizedDescriptionKey: @"The backup archive is incomplete or corrupted."}];
+        return nil;
+    }
+    NSUInteger searchStart = archive.length > (UINT16_MAX + 22) ? archive.length - (UINT16_MAX + 22) : 0;
+    NSUInteger eocd = NSNotFound;
+    for (NSUInteger cursor = archive.length - 22; ; cursor--) {
+        if (ATMReadUInt32(bytes + cursor) == 0x06054b50) { eocd = cursor; break; }
+        if (cursor == searchStart) break;
+    }
+    if (eocd == NSNotFound || eocd + 22 > archive.length || ATMReadUInt16(bytes + eocd + 8) != entries.count || ATMReadUInt16(bytes + eocd + 10) != entries.count || ATMReadUInt32(bytes + eocd + 16) != offset || ATMReadUInt32(bytes + eocd + 12) != eocd - offset || eocd + 22 + ATMReadUInt16(bytes + eocd + 20) != archive.length) {
+        if (error) *error = [NSError errorWithDomain:ATMZipErrorDomain code:11 userInfo:@{NSLocalizedDescriptionKey: @"The backup archive footer is invalid."}];
+        return nil;
+    }
+    NSUInteger central = offset;
+    for (NSDictionary *entry in entries) {
+        if (central + 46 > eocd || ATMReadUInt32(bytes + central) != 0x02014b50 || ATMReadUInt16(bytes + central + 10) != 0 || ATMReadUInt32(bytes + central + 16) != [entry[@"crc32"] unsignedIntValue] || ATMReadUInt32(bytes + central + 20) != [entry[@"size"] unsignedIntValue] || ATMReadUInt32(bytes + central + 24) != [entry[@"size"] unsignedIntValue] || ATMReadUInt32(bytes + central + 42) != [entry[@"offset"] unsignedIntValue]) {
+            if (error) *error = [NSError errorWithDomain:ATMZipErrorDomain code:12 userInfo:@{NSLocalizedDescriptionKey: @"The backup archive index does not match its contents."}];
+            return nil;
+        }
+        uint16_t nameLength = ATMReadUInt16(bytes + central + 28), extraLength = ATMReadUInt16(bytes + central + 30), commentLength = ATMReadUInt16(bytes + central + 32);
+        NSUInteger next = central + 46 + nameLength + extraLength + commentLength;
+        if (next > eocd) return nil;
+        NSString *name = [[NSString alloc] initWithData:[archive subdataWithRange:NSMakeRange(central + 46, nameLength)] encoding:NSUTF8StringEncoding];
+        if (![name isEqualToString:entry[@"path"]]) { if (error) *error = [NSError errorWithDomain:ATMZipErrorDomain code:12 userInfo:@{NSLocalizedDescriptionKey: @"The backup archive index does not match its contents."}]; return nil; }
+        central = next;
+    }
+    if (central != eocd) { if (error) *error = [NSError errorWithDomain:ATMZipErrorDomain code:12 userInfo:@{NSLocalizedDescriptionKey: @"The backup archive index is incomplete."}]; return nil; }
+    return entries;
+}

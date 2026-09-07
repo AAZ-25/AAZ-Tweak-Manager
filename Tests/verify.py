@@ -19,13 +19,13 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "5"
+assert info["CFBundleVersion"] == "6"
 assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["AppIcon60x60"]
 
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta5" in control
+assert "Version: 0.1.0~beta6" in control
 
 excluded_directories = {".git", ".theos-build", "packages"}
 public_files = [
@@ -68,9 +68,24 @@ assert "Selection Updated" in all_text
 assert "No Activity Yet" in all_text
 assert "Clear History?" in all_text
 assert "clearHistory" in all_text
-assert "This is a read-only compatibility preview" in all_text
+assert "Read-only inspection; no packages or sources will be changed" in all_text
 assert 'cell.textLabel.text = item[@"event"]' not in all_text
 assert '@"cachedDEBCount"' in all_text
+assert "ATMValidateStoredZipArchive" in all_text
+assert '@"atomicWrite": @YES' in all_text
+assert "AAZTME01" in all_text
+assert "kCCPBKDF2" in all_text
+assert "kCCHmacAlgSHA256" in all_text
+assert "SecRandomCopyBytes" in all_text
+assert "passwords are never stored" in all_text.lower()
+assert "Import" in all_text
+assert "Only a healthy backup can be imported" in all_text
+assert "Backup Health & Readiness" in all_text
+assert "Backup Changes" in all_text
+assert "Selection Profiles" in all_text
+assert "Search backups" in all_text
+assert "Pin" in all_text and "Unpin" in all_text
+assert "Restore execution is not included" in all_text or "Nothing is restored" in all_text
 assert '@"architecture": @"iphoneos-arm64"' in all_text
 assert '@"jailbreakPrefix"' not in (ROOT / "Core/ATMBackupManager.m").read_text()
 assert '@"iOSVersion"' not in (ROOT / "Core/ATMBackupManager.m").read_text()

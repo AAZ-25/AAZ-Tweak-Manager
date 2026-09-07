@@ -16,6 +16,12 @@ AAZ Tweak Manager is a rootless jailbreak app for reviewing and backing up packa
 - Lists backups with human-readable dates and package, source, and cached-DEB totals.
 - Validates a backup and shows a count-based compatibility summary without exposing a long raw identifier list.
 - Presents a local activity timeline with readable package/backup events, date sections, filters, and safe history clearing.
+- Writes backups atomically through a private partial file, validates archive structure and CRC values, then exposes the final file only after success.
+- Inspects backup health, verifies cached-DEB SHA-256 hashes, and reports migration readiness using counts rather than public package identities.
+- Imports external `.aaztmbackup` files only after read-only integrity validation; import never triggers a restore.
+- Compares standard backups using Added, Removed, Updated, and Unchanged counts.
+- Supports reusable local selection profiles, plus backup search, size-aware sorting, and pinning.
+- Optionally encrypts the complete archive with AES-256-CBC, PBKDF2-HMAC-SHA256 key derivation, and encrypt-then-MAC authentication. Passwords are never stored.
 
 The current beta intentionally does not install, remove, or restore packages. Restore execution will be added only after archive, compatibility, dependency, and transaction behavior are verified on a real jailbroken device.
 
@@ -37,7 +43,7 @@ Each backup can contain:
 - Sanitized `.list` and `.sources` files, including disabled entries
 - Exact cached `.deb` payloads and SHA-256 hashes when present
 
-Repository passwords, tokens, `auth.conf`, device identifiers, detailed device-environment fields, account details, and personal files are not included. Credential-bearing source URLs are redacted, so paid or private repositories may require sign-in again after transfer.
+Repository passwords, backup passwords, tokens, `auth.conf`, device identifiers, detailed device-environment fields, account details, and personal files are not included. Credential-bearing source URLs are redacted, so paid or private repositories may require sign-in again after transfer.
 
 ## Build
 

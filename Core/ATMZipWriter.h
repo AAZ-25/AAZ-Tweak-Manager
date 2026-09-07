@@ -10,5 +10,6 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 NSData * _Nullable ATMReadStoredZipEntry(NSURL *archiveURL, NSString *entryPath, NSError **error);
+NSArray<NSDictionary *> * _Nullable ATMValidateStoredZipArchive(NSURL *archiveURL, NSError **error);
 
 NS_ASSUME_NONNULL_END

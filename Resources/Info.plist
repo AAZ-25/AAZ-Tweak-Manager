@@ -17,7 +17,36 @@
     <key>CFBundleShortVersionString</key>
     <string>0.1.0</string>
     <key>CFBundleVersion</key>
-    <string>5</string>
+    <string>6</string>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>AAZ Tweak Manager Backup</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>com.aaz.tweakmanager.backup</string>
+            </array>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+        </dict>
+    </array>
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.aaz.tweakmanager.backup</string>
+            <key>UTTypeDescription</key>
+            <string>AAZ Tweak Manager Backup</string>
+            <key>UTTypeConformsTo</key>
+            <array><string>public.data</string></array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array><string>aaztmbackup</string></array>
+            </dict>
+        </dict>
+    </array>
     <key>CFBundleIconFiles</key>
     <array>
         <string>AppIcon60x60</string>
