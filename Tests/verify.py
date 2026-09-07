@@ -19,13 +19,13 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "3"
+assert info["CFBundleVersion"] == "4"
 assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["AppIcon60x60"]
 
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta3" in control
+assert "Version: 0.1.0~beta4" in control
 
 excluded_directories = {".git", ".theos-build", "packages"}
 public_files = [
@@ -56,6 +56,14 @@ assert 'record.essential = [fields[@"Essential"]' not in all_text
 assert "privacy=counts-and-stage-flags-only" in all_text
 assert "AAZ-Tweak-Manager-Diagnostic.txt" in all_text
 assert "The diagnostic contains counts and stage flags only" in all_text
+assert "Select All" in all_text
+assert "Unselect All" in all_text
+assert "Search packages" in all_text
+assert "No matching packages" in all_text
+assert "forPackageIDs" in all_text
+assert '@"architecture": @"iphoneos-arm64"' in all_text
+assert '@"jailbreakPrefix"' not in (ROOT / "Core/ATMBackupManager.m").read_text()
+assert '@"iOSVersion"' not in (ROOT / "Core/ATMBackupManager.m").read_text()
 core_text = (ROOT / "Core/ATMCore.m").read_text()
 diagnostic_body = core_text.split("NSURL *ATMWriteDiagnosticReport", 1)[1].split("@implementation ATMPersonalLedger", 1)[0]
 for private_field in ("record.packageID", "record.name", "record.version", "sourceOrigin", "depends"):

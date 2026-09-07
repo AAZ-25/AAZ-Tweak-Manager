@@ -64,8 +64,11 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
 @end
 @implementation ATMPackageSwitch @end
 
-@interface ATMMyTweaksController : UITableViewController
+@interface ATMMyTweaksController : UITableViewController <UISearchResultsUpdating>
 @property(nonatomic, copy) NSArray<ATMPackageRecord *> *visiblePackages;
+@property(nonatomic, copy) NSSet<NSString *> *selectedPackageIDs;
+@property(nonatomic, strong) UISearchController *packageSearchController;
+@property(nonatomic, strong) UIBarButtonItem *selectionButton;
 @end
 
 @implementation ATMMyTweaksController
@@ -74,6 +77,16 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
     [super viewDidLoad];
     self.title = @"My Tweaks";
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"Backup" style:UIBarButtonItemStyleDone target:self action:@selector(createBackup)];
+    self.selectionButton = [[UIBarButtonItem alloc] initWithTitle:@"Select" style:UIBarButtonItemStylePlain target:nil action:nil];
+    self.navigationItem.leftBarButtonItem = self.selectionButton;
+    self.packageSearchController = [[UISearchController alloc] initWithSearchResultsController:nil];
+    self.packageSearchController.searchResultsUpdater = self;
+    self.packageSearchController.obscuresBackgroundDuringPresentation = NO;
+    self.packageSearchController.searchBar.placeholder = @"Search packages";
+    self.navigationItem.searchController = self.packageSearchController;
+    self.navigationItem.hidesSearchBarWhenScrolling = YES;
+    self.definesPresentationContext = YES;
+    self.tableView.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;
     self.refreshControl = [UIRefreshControl new];
     [self.refreshControl addTarget:self action:@selector(refreshData) forControlEvents:UIControlEventValueChanged];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(reloadData) name:ATMDataChangedNotification object:nil];
@@ -83,25 +96,68 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
 - (void)refreshData { [[ATMAppModel shared] refresh]; [self.refreshControl endRefreshing]; }
 - (void)reloadData {
     ATMAppModel *model = ATMAppModel.shared;
+    self.selectedPackageIDs = model.ledger.selectedPackageIDs;
     BOOL showExcluded = [NSUserDefaults.standardUserDefaults boolForKey:ATMShowExcludedKey];
-    if (showExcluded) self.visiblePackages = model.packages;
-    else self.visiblePackages = [model.packages filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(ATMPackageRecord *record, NSDictionary *bindings) { (void)bindings; return record.personalCandidate || [model.ledger isSelectedPackageID:record.packageID]; }]];
+    NSArray<ATMPackageRecord *> *packages = showExcluded ? model.packages : [model.packages filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(ATMPackageRecord *record, NSDictionary *bindings) { (void)bindings; return record.personalCandidate || [self.selectedPackageIDs containsObject:record.packageID]; }]];
+    NSString *query = [self.packageSearchController.searchBar.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (query.length) packages = [packages filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(ATMPackageRecord *record, NSDictionary *bindings) {
+        (void)bindings;
+        return [record.name localizedCaseInsensitiveContainsString:query] || [record.packageID localizedCaseInsensitiveContainsString:query];
+    }]];
+    self.visiblePackages = [packages sortedArrayUsingComparator:^NSComparisonResult(ATMPackageRecord *a, ATMPackageRecord *b) {
+        NSComparisonResult nameResult = [a.name localizedCaseInsensitiveCompare:b.name];
+        return nameResult == NSOrderedSame ? [a.packageID localizedCaseInsensitiveCompare:b.packageID] : nameResult;
+    }];
     NSUInteger personalCount = [[model.packages filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(ATMPackageRecord *record, NSDictionary *bindings) { (void)bindings; return record.personalCandidate; }]] count];
     [self.tableView reloadData];
     self.navigationItem.prompt = model.environment.supportedRootless && !model.scanError ? [NSString stringWithFormat:@"%lu personal • %lu installed", (unsigned long)personalCount, (unsigned long)model.packages.count] : @"Rootless package database unavailable";
+    [self configureSelectionMenu];
+}
+- (void)updateSearchResultsForSearchController:(UISearchController *)searchController { (void)searchController; [self reloadData]; }
+- (NSUInteger)selectedVisibleCount {
+    NSUInteger count = 0;
+    for (ATMPackageRecord *record in self.visiblePackages) if ([self.selectedPackageIDs containsObject:record.packageID]) count++;
+    return count;
+}
+- (void)configureSelectionMenu {
+    __weak typeof(self) weakSelf = self;
+    UIAction *selectAll = [UIAction actionWithTitle:@"Select All" image:[UIImage systemImageNamed:@"checkmark.circle"] identifier:nil handler:^(__unused UIAction *action) { [weakSelf applySelection:YES]; }];
+    UIAction *unselectAll = [UIAction actionWithTitle:@"Unselect All" image:[UIImage systemImageNamed:@"circle"] identifier:nil handler:^(__unused UIAction *action) { [weakSelf confirmUnselectAll]; }];
+    NSUInteger selectedCount = self.selectedVisibleCount;
+    if (!self.visiblePackages.count || selectedCount == self.visiblePackages.count) selectAll.attributes = UIMenuElementAttributesDisabled;
+    if (!selectedCount) unselectAll.attributes = UIMenuElementAttributesDisabled;
+    unselectAll.attributes |= UIMenuElementAttributesDestructive;
+    self.selectionButton.menu = [UIMenu menuWithTitle:@"Shown Packages" children:@[selectAll, unselectAll]];
+}
+- (void)applySelection:(BOOL)selected {
+    NSArray<NSString *> *packageIDs = [self.visiblePackages valueForKey:@"packageID"];
+    if (!packageIDs.count) return;
+    [ATMAppModel.shared.ledger setSelected:selected forPackageIDs:packageIDs];
+    [ATMAppModel.shared.ledger recordEvent:selected ? @"packages-selected" : @"packages-unselected" packageID:nil details:@{ @"count": @(packageIDs.count) }];
+    [self reloadData];
+}
+- (void)confirmUnselectAll {
+    NSUInteger count = self.selectedVisibleCount;
+    if (!count) return;
+    NSString *message = [NSString stringWithFormat:@"This will remove %lu shown packages from the next backup. You can select them again at any time.", (unsigned long)count];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Unselect All Shown?" message:message preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Unselect All" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *action) { [self applySelection:NO]; }]];
+    [self presentViewController:alert animated:YES completion:nil];
 }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { (void)tableView; return 1; }
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { (void)tableView; (void)section; return self.visiblePackages.count ?: 1; }
-- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section { (void)tableView; (void)section; return @"Selected packages are included in the next backup"; }
+- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section { (void)tableView; (void)section; return [NSString stringWithFormat:@"%lu selected • %lu shown", (unsigned long)self.selectedVisibleCount, (unsigned long)self.visiblePackages.count]; }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView; (void)section;
-    return @"The first scan is inferred from APT state and protected bootstrap rules. Review the selection once; later choices are saved explicitly.";
+    return @"Search and Show Excluded Packages control which rows are shown. Select All and Unselect All apply only to the shown rows; choices are saved immediately.";
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     if (!self.visiblePackages.count) {
         UITableViewCell *empty = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
-        empty.textLabel.text = ATMAppModel.shared.scanError ? @"Package database unavailable" : @"No personal packages inferred";
-        empty.detailTextLabel.text = ATMAppModel.shared.scanError.localizedDescription ?: [NSString stringWithFormat:@"%lu installed packages were read. Turn on Show Excluded Packages in Settings to review the classification.", (unsigned long)ATMAppModel.shared.packages.count];
+        BOOL searching = self.packageSearchController.searchBar.text.length > 0;
+        empty.textLabel.text = ATMAppModel.shared.scanError ? @"Package database unavailable" : (searching ? @"No matching packages" : @"No personal packages inferred");
+        empty.detailTextLabel.text = ATMAppModel.shared.scanError.localizedDescription ?: (searching ? @"Try another name or package identifier." : [NSString stringWithFormat:@"%lu installed packages were read. Turn on Show Excluded Packages in Settings to review the classification.", (unsigned long)ATMAppModel.shared.packages.count]);
         empty.selectionStyle = UITableViewCellSelectionStyleNone; return empty;
     }
     UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"package"];
@@ -111,7 +167,7 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
     cell.detailTextLabel.numberOfLines = 2;
     cell.detailTextLabel.text = [NSString stringWithFormat:@"%@ • %@\n%@", record.packageID, record.version, ATMDateDescription(record)];
     ATMPackageSwitch *toggle = [ATMPackageSwitch new]; toggle.packageID = record.packageID;
-    toggle.on = [ATMAppModel.shared.ledger isSelectedPackageID:record.packageID];
+    toggle.on = [self.selectedPackageIDs containsObject:record.packageID];
     [toggle addTarget:self action:@selector(selectionChanged:) forControlEvents:UIControlEventValueChanged];
     cell.accessoryView = toggle; cell.selectionStyle = UITableViewCellSelectionStyleNone;
     return cell;
@@ -119,9 +175,11 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
 - (void)selectionChanged:(ATMPackageSwitch *)sender {
     [ATMAppModel.shared.ledger setSelected:sender.isOn packageID:sender.packageID];
     [ATMAppModel.shared.ledger recordEvent:sender.isOn ? @"package-selected" : @"package-unselected" packageID:sender.packageID details:nil];
+    [self reloadData];
 }
 - (void)createBackup {
     if (!ATMAppModel.shared.environment.supportedRootless || ATMAppModel.shared.scanError || !ATMAppModel.shared.packages.count) { ATMShowError(self, @"Backup unavailable", ATMAppModel.shared.scanError ?: [NSError errorWithDomain:@"ATM" code:1 userInfo:@{NSLocalizedDescriptionKey: @"No installed package inventory is available. An empty backup will not be created."}]); return; }
+    if (!ATMAppModel.shared.ledger.selectedPackageIDs.count) { ATMShowError(self, @"Nothing selected", [NSError errorWithDomain:@"ATM" code:2 userInfo:@{NSLocalizedDescriptionKey: @"Select at least one package before creating a backup."}]); return; }
     self.navigationItem.rightBarButtonItem.enabled = NO;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         NSError *error = nil;

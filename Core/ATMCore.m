@@ -391,12 +391,20 @@ NSURL *ATMWriteDiagnosticReport(ATMEnvironment *environment,
 }
 - (void)setSelected:(BOOL)selected packageID:(NSString *)packageID {
     if (!packageID.length) return;
+    [self setSelected:selected forPackageIDs:@[packageID]];
+}
+- (void)setSelected:(BOOL)selected forPackageIDs:(NSArray<NSString *> *)packageIDs {
+    if (!packageIDs.count) return;
     NSMutableDictionary *ledger = [self loadLedger];
-    NSMutableDictionary *entry = [ledger[packageID] mutableCopy] ?: [NSMutableDictionary dictionary];
-    entry[@"selected"] = @(selected);
-    entry[@"classification"] = @"user-confirmed";
-    if (!entry[@"firstSeen"]) entry[@"firstSeen"] = ATMISODateString([NSDate date]);
-    ledger[packageID] = entry;
+    NSString *now = ATMISODateString([NSDate date]);
+    for (NSString *packageID in packageIDs) {
+        if (![packageID isKindOfClass:NSString.class] || !packageID.length) continue;
+        NSMutableDictionary *entry = [ledger[packageID] mutableCopy] ?: [NSMutableDictionary dictionary];
+        entry[@"selected"] = @(selected);
+        entry[@"classification"] = @"user-confirmed";
+        if (!entry[@"firstSeen"]) entry[@"firstSeen"] = now;
+        ledger[packageID] = entry;
+    }
     [self saveLedger:ledger];
 }
 - (BOOL)isSelectedPackageID:(NSString *)packageID { return [[[self loadLedger] objectForKey:packageID][@"selected"] boolValue]; }

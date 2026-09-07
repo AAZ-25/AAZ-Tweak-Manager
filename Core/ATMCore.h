@@ -63,6 +63,7 @@ FOUNDATION_EXPORT NSURL * _Nullable ATMWriteDiagnosticReport(ATMEnvironment *env
 - (NSSet<NSString *> *)selectedPackageIDs;
 - (void)seedIfNeededWithCandidates:(NSArray<ATMPackageRecord *> *)packages;
 - (void)setSelected:(BOOL)selected packageID:(NSString *)packageID;
+- (void)setSelected:(BOOL)selected forPackageIDs:(NSArray<NSString *> *)packageIDs;
 - (BOOL)isSelectedPackageID:(NSString *)packageID;
 - (nullable NSDate *)firstSeenDateForPackageID:(NSString *)packageID;
 - (void)reconcileInstalledPackages:(NSArray<ATMPackageRecord *> *)packages;

@@ -2,7 +2,6 @@
 #import "ATMZipWriter.h"
 #import <spawn.h>
 #import <signal.h>
-#import <sys/utsname.h>
 #import <sys/wait.h>
 #import <unistd.h>
 
@@ -109,12 +108,9 @@ static NSString *ATMRunDPKGDebField(ATMEnvironment *environment, NSURL *debURL) 
         if (![writer addData:data path:archivePath error:error]) { [NSFileManager.defaultManager removeItemAtURL:archiveURL error:nil]; return nil; }
         entry[@"backupPath"] = archivePath; [sourceManifest addObject:entry];
     }
-    struct utsname systemInfo; uname(&systemInfo);
     NSDictionary *manifest = @{ @"format": @"com.aaz.tweakmanager.backup", @"formatVersion": @1,
                                 @"createdAt": ATMISODateString([NSDate date]), @"rootless": @YES,
-                                @"jailbreakPrefix": self.environment.jailbreakRoot ?: @"",
-                                @"iOSVersion": NSProcessInfo.processInfo.operatingSystemVersionString ?: @"",
-                                @"architecture": [NSString stringWithUTF8String:systemInfo.machine] ?: @"unknown",
+                                @"architecture": @"iphoneos-arm64",
                                 @"packages": packageManifest, @"sources": sourceManifest,
                                 @"credentialsIncluded": @NO, @"restoreExecutionIncluded": @NO };
     NSData *manifestData = [NSJSONSerialization dataWithJSONObject:manifest options:NSJSONWritingPrettyPrinted | NSJSONWritingSortedKeys error:error];
