@@ -1,0 +1,7 @@
+.theos/
+packages/
+*.deb
+*.aaztmbackup
+.DS_Store
+DerivedData/
+xcuserdata/
