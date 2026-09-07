@@ -53,6 +53,12 @@ typedef NS_ENUM(NSInteger, ATMInstallDateConfidence) {
 - (NSArray<ATMSourceRecord *> *)scanSources:(NSError **)error;
 @end
 
+FOUNDATION_EXPORT NSURL * _Nullable ATMWriteDiagnosticReport(ATMEnvironment *environment,
+                                                              NSArray<ATMPackageRecord *> *packages,
+                                                              NSSet<NSString *> *selectedPackageIDs,
+                                                              NSError * _Nullable scanError,
+                                                              NSError **error);
+
 @interface ATMPersonalLedger : NSObject
 - (NSSet<NSString *> *)selectedPackageIDs;
 - (void)seedIfNeededWithCandidates:(NSArray<ATMPackageRecord *> *)packages;

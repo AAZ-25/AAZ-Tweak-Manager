@@ -251,7 +251,8 @@ static NSString *ATMSanitizeSourceText(NSString *text, BOOL *didRedact) {
         record.priority = fields[@"Priority"] ?: @"";
         record.sourceOrigin = fields[@"Origin"] ?: @"";
         record.depends = fields[@"Depends"] ?: @"";
-        record.essential = [fields[@"Essential"] caseInsensitiveCompare:@"yes"] == NSOrderedSame;
+        NSString *essentialValue = fields[@"Essential"];
+        record.essential = essentialValue.length > 0 && [essentialValue caseInsensitiveCompare:@"yes"] == NSOrderedSame;
         record.automaticallyInstalled = [automatic[packageID] boolValue];
         BOOL requiredPriority = [@[@"required", @"important"] containsObject:record.priority.lowercaseString];
         BOOL protectedID = [protected containsObject:packageID.lowercaseString];
@@ -308,6 +309,56 @@ static NSURL *ATMApplicationSupportDirectory(void) {
     NSURL *directory = [NSURL fileURLWithPath:@"/var/mobile/Library/Application Support/AAZTweakManager" isDirectory:YES];
     [NSFileManager.defaultManager createDirectoryAtURL:directory withIntermediateDirectories:YES attributes:@{NSFileProtectionKey: NSFileProtectionCompleteUntilFirstUserAuthentication} error:nil];
     return directory;
+}
+
+NSURL *ATMWriteDiagnosticReport(ATMEnvironment *environment,
+                                NSArray<ATMPackageRecord *> *packages,
+                                NSSet<NSString *> *selectedPackageIDs,
+                                NSError *scanError,
+                                NSError **error) {
+    NSUInteger personal = 0;
+    NSUInteger automatic = 0;
+    NSUInteger essential = 0;
+    NSUInteger requiredPriority = 0;
+    NSUInteger protectedPackage = 0;
+    NSUInteger otherExcluded = 0;
+    for (ATMPackageRecord *record in packages) {
+        if (record.personalCandidate) personal++;
+        else if ([record.classificationReason isEqualToString:@"Dependency installed automatically"]) automatic++;
+        else if ([record.classificationReason isEqualToString:@"Essential system package"]) essential++;
+        else if ([record.classificationReason isEqualToString:@"Required bootstrap package"]) requiredPriority++;
+        else if ([record.classificationReason isEqualToString:@"Protected jailbreak component"]) protectedPackage++;
+        else otherExcluded++;
+    }
+    NSString *databaseKind = @"none";
+    if ([environment.dpkgStatusPath hasSuffix:@"/Library/dpkg/status"]) databaseKind = @"library-dpkg";
+    else if ([environment.dpkgStatusPath hasSuffix:@"/var/lib/dpkg/status"]) databaseKind = @"var-lib-dpkg";
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSDictionary *info = NSBundle.mainBundle.infoDictionary;
+    NSArray *lines = @[
+        @"AAZ Tweak Manager Diagnostic",
+        @"format=1",
+        [NSString stringWithFormat:@"appVersion=%@", info[@"CFBundleShortVersionString"] ?: @"unknown"],
+        [NSString stringWithFormat:@"appBuild=%@", info[@"CFBundleVersion"] ?: @"unknown"],
+        [NSString stringWithFormat:@"rootlessDetected=%@", environment.supportedRootless ? @"yes" : @"no"],
+        [NSString stringWithFormat:@"statusDatabase=%@", databaseKind],
+        [NSString stringWithFormat:@"statusReadable=%@", [fm isReadableFileAtPath:environment.dpkgStatusPath] ? @"yes" : @"no"],
+        [NSString stringWithFormat:@"aptStateReadable=%@", [fm isReadableFileAtPath:environment.aptStatePath] ? @"yes" : @"no"],
+        [NSString stringWithFormat:@"scanErrorCode=%ld", (long)(scanError ? scanError.code : 0)],
+        [NSString stringWithFormat:@"installed=%lu", (unsigned long)packages.count],
+        [NSString stringWithFormat:@"personal=%lu", (unsigned long)personal],
+        [NSString stringWithFormat:@"excludedAutomatic=%lu", (unsigned long)automatic],
+        [NSString stringWithFormat:@"excludedEssential=%lu", (unsigned long)essential],
+        [NSString stringWithFormat:@"excludedPriority=%lu", (unsigned long)requiredPriority],
+        [NSString stringWithFormat:@"excludedProtected=%lu", (unsigned long)protectedPackage],
+        [NSString stringWithFormat:@"excludedOther=%lu", (unsigned long)otherExcluded],
+        [NSString stringWithFormat:@"selected=%lu", (unsigned long)selectedPackageIDs.count],
+        @"privacy=counts-and-stage-flags-only"
+    ];
+    NSString *contents = [[lines componentsJoinedByString:@"\n"] stringByAppendingString:@"\n"];
+    NSURL *url = [ATMApplicationSupportDirectory() URLByAppendingPathComponent:@"AAZ-Tweak-Manager-Diagnostic.txt"];
+    BOOL written = [contents writeToURL:url atomically:YES encoding:NSUTF8StringEncoding error:error];
+    return written ? url : nil;
 }
 
 @implementation ATMPersonalLedger

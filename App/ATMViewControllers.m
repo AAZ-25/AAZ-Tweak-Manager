@@ -236,21 +236,44 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
 @implementation ATMSettingsController
 - (instancetype)init { return [super initWithStyle:UITableViewStyleInsetGrouped]; }
 - (void)viewDidLoad { [super viewDidLoad]; self.title = @"Settings"; }
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { (void)tableView; return 2; }
-- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { (void)tableView; return section == 0 ? 1 : 3; }
-- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section { (void)tableView; return section == 0 ? @"Inventory" : @"Safety"; }
-- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section { (void)tableView; return section == 1 ? @"AAZ Tweak Manager never transmits package, source, device, or account data and this beta does not execute restore transactions." : nil; }
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { (void)tableView; return 3; }
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { (void)tableView; return section == 0 ? 1 : (section == 1 ? 3 : 1); }
+- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section { (void)tableView; return section == 0 ? @"Inventory" : (section == 1 ? @"Safety" : @"Diagnostics"); }
+- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
+    (void)tableView;
+    if (section == 1) return @"AAZ Tweak Manager never transmits package, source, device, or account data and this beta does not execute restore transactions.";
+    if (section == 2) return @"The diagnostic contains counts and stage flags only. It excludes package names, sources, paths, device identifiers, accounts, and credentials.";
+    return nil;
+}
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil]; cell.selectionStyle = UITableViewCellSelectionStyleNone;
     if (indexPath.section == 0) {
         cell.textLabel.text = @"Show Excluded Packages"; cell.detailTextLabel.text = @"Review system/dependency classification without selecting them automatically.";
         UISwitch *toggle = [UISwitch new]; toggle.on = [NSUserDefaults.standardUserDefaults boolForKey:ATMShowExcludedKey]; [toggle addTarget:self action:@selector(showExcludedChanged:) forControlEvents:UIControlEventValueChanged]; cell.accessoryView = toggle;
-    } else {
+    } else if (indexPath.section == 1) {
         NSArray *titles = @[@"Rootless only", @"Credentials excluded", @"Restore preview only"];
         NSArray *details = @[@"Reads the /var/jb APT and dpkg state.", @"auth.conf and embedded URL credentials are not exported.", @"No package installation, removal, or source write occurs."];
         cell.textLabel.text = titles[indexPath.row]; cell.detailTextLabel.text = details[indexPath.row]; cell.detailTextLabel.numberOfLines = 2; cell.imageView.image = [UIImage systemImageNamed:@"checkmark.shield"];
+    } else {
+        cell.textLabel.text = @"Share Diagnostic File";
+        cell.detailTextLabel.text = @"Create a privacy-safe classification summary.";
+        cell.imageView.image = [UIImage systemImageNamed:@"doc.text.magnifyingglass"];
+        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        cell.selectionStyle = UITableViewCellSelectionStyleDefault;
     }
     return cell;
+}
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
+    [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    if (indexPath.section != 2) return;
+    NSError *error = nil;
+    ATMAppModel *model = ATMAppModel.shared;
+    NSURL *url = ATMWriteDiagnosticReport(model.environment, model.packages, model.ledger.selectedPackageIDs, model.scanError, &error);
+    if (!url) { ATMShowError(self, @"Diagnostic unavailable", error); return; }
+    UIActivityViewController *activity = [[UIActivityViewController alloc] initWithActivityItems:@[url] applicationActivities:nil];
+    activity.popoverPresentationController.sourceView = self.view;
+    activity.popoverPresentationController.sourceRect = self.view.bounds;
+    [self presentViewController:activity animated:YES completion:nil];
 }
 - (void)showExcludedChanged:(UISwitch *)sender { [NSUserDefaults.standardUserDefaults setBool:sender.isOn forKey:ATMShowExcludedKey]; [NSNotificationCenter.defaultCenter postNotificationName:ATMDataChangedNotification object:nil]; }
 @end

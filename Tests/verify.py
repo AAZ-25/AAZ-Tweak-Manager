@@ -19,13 +19,13 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "2"
+assert info["CFBundleVersion"] == "3"
 assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["AppIcon60x60"]
 
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta2" in control
+assert "Version: 0.1.0~beta3" in control
 
 excluded_directories = {".git", ".theos-build", "packages"}
 public_files = [
@@ -51,6 +51,15 @@ for forbidden in [
 
 assert '@"restoreExecutionIncluded": @NO' in all_text
 assert "credentials-redacted" in all_text
+assert 'record.essential = essentialValue.length > 0 &&' in all_text
+assert 'record.essential = [fields[@"Essential"]' not in all_text
+assert "privacy=counts-and-stage-flags-only" in all_text
+assert "AAZ-Tweak-Manager-Diagnostic.txt" in all_text
+assert "The diagnostic contains counts and stage flags only" in all_text
+core_text = (ROOT / "Core/ATMCore.m").read_text()
+diagnostic_body = core_text.split("NSURL *ATMWriteDiagnosticReport", 1)[1].split("@implementation ATMPersonalLedger", 1)[0]
+for private_field in ("record.packageID", "record.name", "record.version", "sourceOrigin", "depends"):
+    assert private_field not in diagnostic_body, f"diagnostic exposes {private_field}"
 assert "performsFirstActionWithFullSwipe = NO" in all_text
 assert "workflow_dispatch:" in (ROOT / ".github/workflows/build.yml").read_text()
 assert not re.search(r"^\s*(push|pull_request|schedule):", (ROOT / ".github/workflows/build.yml").read_text(), re.M)
