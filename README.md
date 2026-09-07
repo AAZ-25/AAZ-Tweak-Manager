@@ -8,11 +8,14 @@ AAZ Tweak Manager is a rootless jailbreak app for reviewing and backing up packa
 - Lets the user correct the inferred personal-package selection. Confirmed choices are kept in a private local ledger.
 - Searches the shown package list and provides `Select All` and `Unselect All` actions scoped to the current results.
 - Saves bulk selection changes in one ledger update and confirms destructive bulk deselection.
+- Confirms the exact selected-package and sanitized-source counts before creating a backup.
+- Shows a clear in-progress state and reports the package, source, and cached-DEB totals after creation.
 - Reads installation dates from available `dpkg` logs. Missing historical data is reported as unknown rather than estimated.
 - Backs up selected package metadata, sanitized APT source definitions, and exact cached `.deb` files when available.
 - Produces a portable `.aaztmbackup` archive with a versioned JSON manifest and SHA-256 hashes for included package files.
-- Lists and shares backups and requires confirmation before deleting one.
-- Validates a backup and shows a restore preview.
+- Lists backups with human-readable dates and package, source, and cached-DEB totals.
+- Validates a backup and shows a count-based compatibility summary without exposing a long raw identifier list.
+- Presents a local activity timeline with readable package/backup events, date sections, filters, and safe history clearing.
 
 The current beta intentionally does not install, remove, or restore packages. Restore execution will be added only after archive, compatibility, dependency, and transaction behavior are verified on a real jailbroken device.
 

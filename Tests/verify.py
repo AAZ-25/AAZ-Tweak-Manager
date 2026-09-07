@@ -19,13 +19,13 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "4"
+assert info["CFBundleVersion"] == "5"
 assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["AppIcon60x60"]
 
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta4" in control
+assert "Version: 0.1.0~beta5" in control
 
 excluded_directories = {".git", ".theos-build", "packages"}
 public_files = [
@@ -61,6 +61,16 @@ assert "Unselect All" in all_text
 assert "Search packages" in all_text
 assert "No matching packages" in all_text
 assert "forPackageIDs" in all_text
+assert "Create Backup?" in all_text
+assert "Creating…" in all_text
+assert "Backup Summary" in all_text
+assert "Selection Updated" in all_text
+assert "No Activity Yet" in all_text
+assert "Clear History?" in all_text
+assert "clearHistory" in all_text
+assert "This is a read-only compatibility preview" in all_text
+assert 'cell.textLabel.text = item[@"event"]' not in all_text
+assert '@"cachedDEBCount"' in all_text
 assert '@"architecture": @"iphoneos-arm64"' in all_text
 assert '@"jailbreakPrefix"' not in (ROOT / "Core/ATMBackupManager.m").read_text()
 assert '@"iOSVersion"' not in (ROOT / "Core/ATMBackupManager.m").read_text()

@@ -449,4 +449,8 @@ NSURL *ATMWriteDiagnosticReport(ATMEnvironment *environment,
     NSArray *items = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
     return [items isKindOfClass:NSArray.class] ? items : @[];
 }
+- (BOOL)clearHistory:(NSError **)error {
+    if (![NSFileManager.defaultManager fileExistsAtPath:self.historyURL.path]) return YES;
+    return [NSFileManager.defaultManager removeItemAtURL:self.historyURL error:error];
+}
 @end

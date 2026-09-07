@@ -53,6 +53,20 @@ static NSString *ATMDateDescription(ATMPackageRecord *record) {
     return [NSString stringWithFormat:@"%@ %@", label, [formatter stringFromDate:date]];
 }
 
+static NSDate *ATMDateFromISO(NSString *stamp) {
+    if (![stamp isKindOfClass:NSString.class] || !stamp.length) return nil;
+    static NSISO8601DateFormatter *formatter; static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{ formatter = [NSISO8601DateFormatter new]; });
+    return [formatter dateFromString:stamp];
+}
+
+static NSString *ATMShortDateTime(NSDate *date) {
+    if (!date) return @"Date unknown";
+    static NSDateFormatter *formatter; static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{ formatter = [NSDateFormatter new]; formatter.dateStyle = NSDateFormatterMediumStyle; formatter.timeStyle = NSDateFormatterShortStyle; });
+    return [formatter stringFromDate:date];
+}
+
 static void ATMShowError(UIViewController *controller, NSString *title, NSError *error) {
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:title message:error.localizedDescription ?: @"Unknown error" preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
@@ -130,7 +144,10 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
     self.selectionButton.menu = [UIMenu menuWithTitle:@"Shown Packages" children:@[selectAll, unselectAll]];
 }
 - (void)applySelection:(BOOL)selected {
-    NSArray<NSString *> *packageIDs = [self.visiblePackages valueForKey:@"packageID"];
+    NSMutableArray<NSString *> *packageIDs = [NSMutableArray array];
+    for (ATMPackageRecord *record in self.visiblePackages) {
+        if ([self.selectedPackageIDs containsObject:record.packageID] != selected) [packageIDs addObject:record.packageID];
+    }
     if (!packageIDs.count) return;
     [ATMAppModel.shared.ledger setSelected:selected forPackageIDs:packageIDs];
     [ATMAppModel.shared.ledger recordEvent:selected ? @"packages-selected" : @"packages-unselected" packageID:nil details:@{ @"count": @(packageIDs.count) }];
@@ -179,15 +196,38 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
 }
 - (void)createBackup {
     if (!ATMAppModel.shared.environment.supportedRootless || ATMAppModel.shared.scanError || !ATMAppModel.shared.packages.count) { ATMShowError(self, @"Backup unavailable", ATMAppModel.shared.scanError ?: [NSError errorWithDomain:@"ATM" code:1 userInfo:@{NSLocalizedDescriptionKey: @"No installed package inventory is available. An empty backup will not be created."}]); return; }
-    if (!ATMAppModel.shared.ledger.selectedPackageIDs.count) { ATMShowError(self, @"Nothing selected", [NSError errorWithDomain:@"ATM" code:2 userInfo:@{NSLocalizedDescriptionKey: @"Select at least one package before creating a backup."}]); return; }
+    NSSet<NSString *> *selected = ATMAppModel.shared.ledger.selectedPackageIDs;
+    NSUInteger selectedInstalledCount = [[ATMAppModel.shared.packages filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(ATMPackageRecord *record, NSDictionary *bindings) { (void)bindings; return [selected containsObject:record.packageID]; }]] count];
+    if (!selectedInstalledCount) { ATMShowError(self, @"Nothing selected", [NSError errorWithDomain:@"ATM" code:2 userInfo:@{NSLocalizedDescriptionKey: @"Select at least one installed package before creating a backup."}]); return; }
+    NSUInteger sourceCount = ATMAppModel.shared.sources.count;
+    NSString *message = [NSString stringWithFormat:@"%lu selected package%@ and %lu sanitized source%@ will be included. Exact cached DEBs are added when available.", (unsigned long)selectedInstalledCount, selectedInstalledCount == 1 ? @"" : @"s", (unsigned long)sourceCount, sourceCount == 1 ? @"" : @"s"];
+    UIAlertController *confirmation = [UIAlertController alertControllerWithTitle:@"Create Backup?" message:message preferredStyle:UIAlertControllerStyleAlert];
+    [confirmation addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [confirmation addAction:[UIAlertAction actionWithTitle:@"Create Backup" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) { [self performBackup]; }]];
+    [self presentViewController:confirmation animated:YES completion:nil];
+}
+- (void)performBackup {
+    UIBarButtonItem *backupButton = self.navigationItem.rightBarButtonItem;
+    backupButton.title = @"Creating…";
     self.navigationItem.rightBarButtonItem.enabled = NO;
+    self.selectionButton.enabled = NO;
+    self.packageSearchController.searchBar.userInteractionEnabled = NO;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         NSError *error = nil;
         NSURL *url = [ATMAppModel.shared.backupManager createBackupWithPackages:ATMAppModel.shared.packages sources:ATMAppModel.shared.sources error:&error];
         dispatch_async(dispatch_get_main_queue(), ^{
-            self.navigationItem.rightBarButtonItem.enabled = YES;
+            backupButton.title = @"Backup";
+            backupButton.enabled = YES;
+            self.selectionButton.enabled = YES;
+            self.packageSearchController.searchBar.userInteractionEnabled = YES;
             if (!url) { ATMShowError(self, @"Backup failed", error); return; }
-            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Backup created" message:@"The archive contains selected package metadata, sanitized sources, and exact cached DEBs when available. Repository credentials are never included." preferredStyle:UIAlertControllerStyleAlert];
+            NSDictionary *manifest = [ATMAppModel.shared.backupManager manifestForBackup:url error:nil];
+            NSArray *packages = [manifest[@"packages"] isKindOfClass:NSArray.class] ? manifest[@"packages"] : @[];
+            NSArray *sources = [manifest[@"sources"] isKindOfClass:NSArray.class] ? manifest[@"sources"] : @[];
+            NSUInteger cachedCount = [[packages filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *package, NSDictionary *bindings) { (void)bindings; return [package[@"debStatus"] isEqualToString:@"exact-cache"]; }]] count];
+            NSString *successMessage = [NSString stringWithFormat:@"%lu packages • %lu sources • %lu cached DEBs\n\nCredentials are never included.", (unsigned long)packages.count, (unsigned long)sources.count, (unsigned long)cachedCount];
+            [NSNotificationCenter.defaultCenter postNotificationName:ATMDataChangedNotification object:nil];
+            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Backup Created" message:successMessage preferredStyle:UIAlertControllerStyleAlert];
             [alert addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleCancel handler:nil]];
             [alert addAction:[UIAlertAction actionWithTitle:@"Share" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) { [self shareURL:url sourceView:self.navigationController.navigationBar]; }]];
             [self presentViewController:alert animated:YES completion:nil];
@@ -214,23 +254,44 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(reloadData) name:ATMDataChangedNotification object:nil]; [self reloadData];
 }
 - (void)dealloc { [NSNotificationCenter.defaultCenter removeObserver:self]; }
+- (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self reloadData]; }
 - (void)reloadData { self.backups = ATMAppModel.shared.backupManager.availableBackups; [self.tableView reloadData]; }
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { (void)tableView; (void)section; return self.backups.count ?: 1; }
-- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section { (void)tableView; (void)section; return @"This beta validates and previews restoration. It does not execute package installation or removal."; }
+- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section { (void)tableView; (void)section; return self.backups.count ? [NSString stringWithFormat:@"%lu saved backup%@", (unsigned long)self.backups.count, self.backups.count == 1 ? @"" : @"s"] : nil; }
+- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section { (void)tableView; (void)section; return @"Open a backup for a compatibility summary or to share it. Restore execution is not included in this beta."; }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"backup"] ?: [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:@"backup"];
-    if (!self.backups.count) { cell.textLabel.text = @"No backups yet"; cell.detailTextLabel.text = @"Create one from My Tweaks."; cell.accessoryType = UITableViewCellAccessoryNone; return cell; }
+    if (!self.backups.count) { cell.textLabel.text = @"No Backups Yet"; cell.detailTextLabel.text = @"Select packages in My Tweaks, then tap Backup."; cell.imageView.image = [UIImage systemImageNamed:@"externaldrive.badge.plus"]; cell.accessoryType = UITableViewCellAccessoryNone; return cell; }
     NSURL *url = self.backups[indexPath.row]; NSDictionary *manifest = [ATMAppModel.shared.backupManager manifestForBackup:url error:nil];
-    cell.textLabel.text = url.lastPathComponent;
-    cell.detailTextLabel.text = [NSString stringWithFormat:@"%@ packages • %@ sources", @([manifest[@"packages"] count]), @([manifest[@"sources"] count])];
+    if (!manifest) {
+        cell.textLabel.text = @"Backup Needs Attention";
+        cell.detailTextLabel.text = @"The manifest could not be validated.";
+        cell.imageView.image = [UIImage systemImageNamed:@"exclamationmark.triangle.fill"];
+        cell.imageView.tintColor = UIColor.systemOrangeColor;
+        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        return cell;
+    }
+    NSArray *packages = [manifest[@"packages"] isKindOfClass:NSArray.class] ? manifest[@"packages"] : @[];
+    NSArray *sources = [manifest[@"sources"] isKindOfClass:NSArray.class] ? manifest[@"sources"] : @[];
+    NSUInteger cachedCount = [[packages filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *package, NSDictionary *bindings) { (void)bindings; return [package[@"debStatus"] isEqualToString:@"exact-cache"]; }]] count];
+    NSDate *created = ATMDateFromISO(manifest[@"createdAt"]);
+    if (!created) [url getResourceValue:&created forKey:NSURLContentModificationDateKey error:nil];
+    cell.textLabel.text = [NSString stringWithFormat:@"Backup — %@", ATMShortDateTime(created)];
+    cell.detailTextLabel.text = [NSString stringWithFormat:@"%lu packages • %lu sources • %lu cached DEBs", (unsigned long)packages.count, (unsigned long)sources.count, (unsigned long)cachedCount];
+    cell.imageView.image = [UIImage systemImageNamed:@"checkmark.shield.fill"];
+    cell.imageView.tintColor = UIColor.systemGreenColor;
     cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator; return cell;
 }
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES]; if (!self.backups.count) return;
     NSError *error = nil; NSDictionary *preview = [ATMAppModel.shared.backupManager restorePreviewForBackup:self.backups[indexPath.row] installedPackages:ATMAppModel.shared.packages error:&error];
     if (!preview.count) { ATMShowError(self, @"Invalid backup", error); return; }
-    NSString *message = [NSString stringWithFormat:@"Missing: %@\nDifferent version: %@\nAlready installed: %@\nUnavailable DEBs: %@\nSources: %@\n\nNo changes will be made by this beta.", preview[@"missing"], preview[@"differentVersion"], preview[@"alreadyInstalled"], preview[@"packagePayloadUnavailable"], preview[@"sourceCount"]];
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Restore Preview" message:message preferredStyle:UIAlertControllerStyleAlert];
+    NSUInteger missing = [preview[@"missing"] count];
+    NSUInteger different = [preview[@"differentVersion"] count];
+    NSUInteger installed = [preview[@"alreadyInstalled"] count];
+    NSUInteger unavailable = [preview[@"packagePayloadUnavailable"] count];
+    NSString *message = [NSString stringWithFormat:@"Already installed: %lu\nMissing: %lu\nDifferent version: %lu\nCached DEB unavailable: %lu\nSanitized sources: %@\n\nThis is a read-only compatibility preview. No packages or sources will be changed.", (unsigned long)installed, (unsigned long)missing, (unsigned long)different, (unsigned long)unavailable, preview[@"sourceCount"] ?: @0];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Backup Summary" message:message preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"Close" style:UIAlertActionStyleCancel handler:nil]];
     [alert addAction:[UIAlertAction actionWithTitle:@"Share Backup" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) { [self shareURL:self.backups[indexPath.row]]; }]];
     [self presentViewController:alert animated:YES completion:nil];
@@ -244,9 +305,11 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
     if (!self.backups.count) return nil;
     UIContextualAction *delete = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleDestructive title:@"Delete" handler:^(__unused UIContextualAction *action, __unused UIView *sourceView, void (^completionHandler)(BOOL)) {
         NSURL *url = self.backups[indexPath.row];
-        UIAlertController *confirm = [UIAlertController alertControllerWithTitle:@"Delete Backup?" message:url.lastPathComponent preferredStyle:UIAlertControllerStyleAlert];
+        NSDictionary *manifest = [ATMAppModel.shared.backupManager manifestForBackup:url error:nil];
+        NSString *message = [NSString stringWithFormat:@"This permanently removes the backup containing %@ package%@ from this device.", @([manifest[@"packages"] count]), [manifest[@"packages"] count] == 1 ? @"" : @"s"];
+        UIAlertController *confirm = [UIAlertController alertControllerWithTitle:@"Delete Backup?" message:message preferredStyle:UIAlertControllerStyleAlert];
         [confirm addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(__unused UIAlertAction *a) { completionHandler(NO); }]];
-        [confirm addAction:[UIAlertAction actionWithTitle:@"Delete" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *a) { NSError *error = nil; BOOL ok = [NSFileManager.defaultManager removeItemAtURL:url error:&error]; if (ok) [ATMAppModel.shared.ledger recordEvent:@"backup-deleted" packageID:nil details:@{ @"file": url.lastPathComponent }]; completionHandler(ok); [self reloadData]; if (!ok) ATMShowError(self, @"Delete failed", error); }]];
+        [confirm addAction:[UIAlertAction actionWithTitle:@"Delete" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *a) { NSError *error = nil; BOOL ok = [NSFileManager.defaultManager removeItemAtURL:url error:&error]; if (ok) [ATMAppModel.shared.ledger recordEvent:@"backup-deleted" packageID:nil details:nil]; completionHandler(ok); [self reloadData]; if (!ok) ATMShowError(self, @"Delete failed", error); }]];
         [self presentViewController:confirm animated:YES completion:nil];
     }];
     UISwipeActionsConfiguration *configuration = [UISwipeActionsConfiguration configurationWithActions:@[delete]]; configuration.performsFirstActionWithFullSwipe = NO; return configuration;
@@ -275,18 +338,114 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
 }
 @end
 
-@interface ATMHistoryController : UITableViewController @end
+@interface ATMHistoryController : UITableViewController
+@property(nonatomic, strong) UISegmentedControl *filterControl;
+@property(nonatomic, copy) NSArray<NSDictionary *> *sections;
+@end
 @implementation ATMHistoryController
 - (instancetype)init { return [super initWithStyle:UITableViewStyleInsetGrouped]; }
-- (void)viewDidLoad { [super viewDidLoad]; self.title = @"History"; }
-- (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self.tableView reloadData]; }
-- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { (void)tableView; (void)section; return ATMAppModel.shared.ledger.history.count ?: 1; }
+- (void)viewDidLoad {
+    [super viewDidLoad]; self.title = @"History";
+    self.filterControl = [[UISegmentedControl alloc] initWithItems:@[@"All", @"Packages", @"Backups"]];
+    self.filterControl.selectedSegmentIndex = 0;
+    [self.filterControl addTarget:self action:@selector(reloadHistory) forControlEvents:UIControlEventValueChanged];
+    UIView *filterHeader = [[UIView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 60)];
+    self.filterControl.frame = CGRectMake(16, 10, MAX(0, filterHeader.bounds.size.width - 32), 36);
+    self.filterControl.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    [filterHeader addSubview:self.filterControl];
+    self.tableView.tableHeaderView = filterHeader;
+    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"Clear" style:UIBarButtonItemStylePlain target:self action:@selector(confirmClearHistory)];
+}
+- (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self reloadHistory]; }
+- (BOOL)isBackupEvent:(NSString *)event { return [event hasPrefix:@"backup-"]; }
+- (void)reloadHistory {
+    NSArray<NSDictionary *> *history = ATMAppModel.shared.ledger.history;
+    NSMutableArray<NSDictionary *> *filtered = [NSMutableArray array];
+    for (NSDictionary *item in history.reverseObjectEnumerator) {
+        NSString *event = [item[@"event"] isKindOfClass:NSString.class] ? item[@"event"] : @"";
+        BOOL backupEvent = [self isBackupEvent:event];
+        if (self.filterControl.selectedSegmentIndex == 1 && backupEvent) continue;
+        if (self.filterControl.selectedSegmentIndex == 2 && !backupEvent) continue;
+        [filtered addObject:item];
+    }
+    NSCalendar *calendar = NSCalendar.currentCalendar;
+    NSMutableArray<NSDictionary *> *sections = [NSMutableArray array];
+    NSMutableArray *currentItems = nil; NSString *currentKey = nil;
+    static NSDateFormatter *dayFormatter; static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{ dayFormatter = [NSDateFormatter new]; dayFormatter.dateStyle = NSDateFormatterMediumStyle; dayFormatter.timeStyle = NSDateFormatterNoStyle; });
+    for (NSDictionary *item in filtered) {
+        NSDate *date = ATMDateFromISO(item[@"timestamp"]);
+        NSString *key = date ? [dayFormatter stringFromDate:date] : @"Date Unknown";
+        NSString *title = key;
+        if (date && [calendar isDateInToday:date]) title = @"Today";
+        else if (date && [calendar isDateInYesterday:date]) title = @"Yesterday";
+        if (![key isEqualToString:currentKey]) {
+            currentKey = key; currentItems = [NSMutableArray array];
+            [sections addObject:@{ @"title": title, @"items": currentItems }];
+        }
+        [currentItems addObject:item];
+    }
+    self.sections = sections;
+    self.navigationItem.rightBarButtonItem.enabled = history.count > 0;
+    [self.tableView reloadData];
+}
+- (void)confirmClearHistory {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Clear History?" message:@"This removes the local activity timeline. Your package selections and backup files will not be changed." preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Clear History" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *action) {
+        NSError *error = nil;
+        if (![ATMAppModel.shared.ledger clearHistory:&error]) { ATMShowError(self, @"History could not be cleared", error); return; }
+        [self reloadHistory];
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { (void)tableView; return self.sections.count ?: 1; }
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { (void)tableView; return self.sections.count ? [self.sections[section][@"items"] count] : 1; }
+- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section { (void)tableView; return self.sections.count ? self.sections[section][@"title"] : nil; }
+- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
+    (void)tableView;
+    if (section != MAX(0, (NSInteger)self.sections.count - 1)) return nil;
+    return @"History is stored only on this device. Clearing it does not change selections or delete backup files.";
+}
+- (NSString *)packageNameForID:(NSString *)packageID {
+    if (![packageID isKindOfClass:NSString.class] || !packageID.length) return nil;
+    for (ATMPackageRecord *record in ATMAppModel.shared.packages) if ([record.packageID isEqualToString:packageID]) return record.name.length ? record.name : packageID;
+    return packageID;
+}
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"history"] ?: [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:@"history"];
-    NSArray *history = ATMAppModel.shared.ledger.history;
-    if (!history.count) { cell.textLabel.text = @"No manager history yet"; cell.detailTextLabel.text = @"Package dates from dpkg logs appear in My Tweaks."; return cell; }
-    NSDictionary *item = history[history.count - 1 - indexPath.row]; cell.textLabel.text = item[@"event"] ?: @"Event";
-    cell.detailTextLabel.text = [NSString stringWithFormat:@"%@%@", item[@"timestamp"] ?: @"", item[@"packageID"] ? [NSString stringWithFormat:@" • %@", item[@"packageID"]] : @""]; return cell;
+    cell.imageView.tintColor = UIColor.systemBlueColor;
+    if (!self.sections.count) {
+        cell.textLabel.text = self.filterControl.selectedSegmentIndex ? @"No Matching Activity" : @"No Activity Yet";
+        cell.detailTextLabel.text = self.filterControl.selectedSegmentIndex ? @"Choose another filter to view activity." : @"Selections, package changes, and backups will appear here.";
+        cell.imageView.image = [UIImage systemImageNamed:@"clock"];
+        cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        return cell;
+    }
+    NSDictionary *item = self.sections[indexPath.section][@"items"][indexPath.row];
+    NSString *event = [item[@"event"] isKindOfClass:NSString.class] ? item[@"event"] : @"";
+    NSDictionary *details = [item[@"details"] isKindOfClass:NSDictionary.class] ? item[@"details"] : @{};
+    NSString *packageName = [self packageNameForID:item[@"packageID"]];
+    NSString *title = @"Activity"; NSString *summary = @""; NSString *symbol = @"clock.arrow.circlepath";
+    if ([event isEqualToString:@"package-selected"]) { title = packageName ?: @"Package Selected"; summary = @"Included in the next backup"; symbol = @"checkmark.circle.fill"; }
+    else if ([event isEqualToString:@"package-unselected"]) { title = packageName ?: @"Package Unselected"; summary = @"Removed from the next backup"; symbol = @"minus.circle.fill"; }
+    else if ([event isEqualToString:@"packages-selected"]) { title = @"Selection Updated"; summary = [NSString stringWithFormat:@"%@ shown packages included", details[@"count"] ?: @0]; symbol = @"checkmark.circle.fill"; }
+    else if ([event isEqualToString:@"packages-unselected"]) { title = @"Selection Updated"; summary = [NSString stringWithFormat:@"%@ shown packages removed", details[@"count"] ?: @0]; symbol = @"minus.circle.fill"; }
+    else if ([event isEqualToString:@"package-detected-install"]) { title = packageName ?: @"Package Detected"; summary = @"New installed package found"; symbol = @"shippingbox.fill"; }
+    else if ([event isEqualToString:@"package-detected-update"]) { title = packageName ?: @"Package Updated"; summary = [NSString stringWithFormat:@"Updated from %@ to %@", details[@"from"] ?: @"an earlier version", details[@"to"] ?: @"a newer version"]; symbol = @"arrow.triangle.2.circlepath"; }
+    else if ([event isEqualToString:@"package-detected-remove"]) { title = packageName ?: @"Package Removed"; summary = @"No longer installed"; symbol = @"trash.fill"; }
+    else if ([event isEqualToString:@"backup-created"]) { title = @"Backup Created"; summary = [NSString stringWithFormat:@"%@ packages • %@ sources • %@ cached DEBs", details[@"packageCount"] ?: @0, details[@"sourceCount"] ?: @0, details[@"cachedDEBCount"] ?: @0]; symbol = @"checkmark.shield.fill"; }
+    else if ([event isEqualToString:@"backup-deleted"]) { title = @"Backup Deleted"; summary = @"Removed from this device"; symbol = @"trash.fill"; }
+    NSDate *date = ATMDateFromISO(item[@"timestamp"]);
+    static NSDateFormatter *timeFormatter; static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{ timeFormatter = [NSDateFormatter new]; timeFormatter.dateStyle = NSDateFormatterNoStyle; timeFormatter.timeStyle = NSDateFormatterShortStyle; });
+    NSString *time = date ? [timeFormatter stringFromDate:date] : @"Time unknown";
+    cell.textLabel.text = title;
+    cell.detailTextLabel.text = summary.length ? [NSString stringWithFormat:@"%@ • %@", summary, time] : time;
+    cell.detailTextLabel.numberOfLines = 2;
+    cell.imageView.image = [UIImage systemImageNamed:symbol];
+    cell.selectionStyle = UITableViewCellSelectionStyleNone;
+    return cell;
 }
 @end
 

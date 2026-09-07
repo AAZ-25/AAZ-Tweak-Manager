@@ -70,6 +70,7 @@ FOUNDATION_EXPORT NSURL * _Nullable ATMWriteDiagnosticReport(ATMEnvironment *env
 - (NSURL *)historyURL;
 - (void)recordEvent:(NSString *)event packageID:(nullable NSString *)packageID details:(nullable NSDictionary *)details;
 - (NSArray<NSDictionary *> *)history;
+- (BOOL)clearHistory:(NSError **)error;
 @end
 
 NSString *ATMISODateString(NSDate *date);

@@ -117,7 +117,8 @@ static NSString *ATMRunDPKGDebField(ATMEnvironment *environment, NSURL *debURL) 
     if (!manifestData || ![writer addData:manifestData path:@"manifest.json" error:error] || ![writer close:error]) {
         [NSFileManager.defaultManager removeItemAtURL:archiveURL error:nil]; return nil;
     }
-    [self.ledger recordEvent:@"backup-created" packageID:nil details:@{ @"packageCount": @(chosen.count), @"sourceCount": @(sources.count), @"file": archiveURL.lastPathComponent }];
+    NSUInteger cachedCount = [[packageManifest filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *package, NSDictionary *bindings) { (void)bindings; return [package[@"debStatus"] isEqualToString:@"exact-cache"]; }]] count];
+    [self.ledger recordEvent:@"backup-created" packageID:nil details:@{ @"packageCount": @(chosen.count), @"sourceCount": @(sources.count), @"cachedDEBCount": @(cachedCount) }];
     return archiveURL;
 }
 - (NSDictionary *)manifestForBackup:(NSURL *)backupURL error:(NSError **)error {
