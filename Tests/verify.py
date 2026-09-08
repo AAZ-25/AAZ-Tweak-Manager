@@ -19,13 +19,15 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "7"
+assert info["CFBundleVersion"] == "8"
+assert info["LSSupportsOpeningDocumentsInPlace"] is True
 assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["AppIcon60x60"]
 
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta7" in control
+assert "Version: 0.1.0~beta8" in control
+assert "Priority: optional" in control
 
 excluded_directories = {".git", ".theos-build", "packages"}
 public_files = [
@@ -55,7 +57,7 @@ assert 'record.essential = essentialValue.length > 0 &&' in all_text
 assert 'record.essential = [fields[@"Essential"]' not in all_text
 assert "privacy=counts-and-stage-flags-only" in all_text
 assert "AAZ-Tweak-Manager-Diagnostic.txt" in all_text
-assert "The diagnostic contains counts and stage flags only" in all_text
+assert "Counts and stage flags only" in all_text
 assert "Select All" in all_text
 assert "Unselect All" in all_text
 assert "Search packages" in all_text
@@ -68,7 +70,7 @@ assert "Selection Updated" in all_text
 assert "No Activity Yet" in all_text
 assert "Clear History?" in all_text
 assert "clearHistory" in all_text
-assert "Read-only inspection; no packages or sources will be changed" in all_text
+assert "No changes are made" in all_text
 assert 'cell.textLabel.text = item[@"event"]' not in all_text
 assert '@"cachedDEBCount"' in all_text
 assert "ATMValidateStoredZipArchive" in all_text
@@ -86,21 +88,25 @@ assert "Selection Profiles" in all_text
 assert "Manage Profiles" in all_text
 assert "Version %@ — Build %@" in all_text
 assert "https://x.com/_kkk2" in all_text
-assert "Preparing Import" in all_text
+assert "Importing Backup" in all_text
 assert "import.staged" in all_text
 assert "importStage=%@" in all_text
 assert "importErrorCode=%ld" in all_text
 assert "Search backups" in all_text
 assert "Pin" in all_text and "Unpin" in all_text
 assert "#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>" in all_text
-assert "initForOpeningContentTypes:types asCopy:YES" in all_text
-assert '[UTType typeWithIdentifier:@"public.data"]' in all_text
+assert "initForOpeningContentTypes:@[itemType] asCopy:YES" in all_text
+assert '[UTType typeWithIdentifier:@"public.item"]' in all_text
+assert '"picker-opened"' in all_text
+assert '"file-selected"' in all_text
+assert '"picker-cancelled"' in all_text
 assert "UTType.data" not in all_text
 assert "initWithDocumentTypes:" not in all_text
 assert "UIDocumentPickerModeImport" not in all_text
 assert "for (NSUInteger index = 0; index < titles.count; index++)" in all_text
 assert "Security UniformTypeIdentifiers" in (ROOT / "Makefile").read_text()
-assert "Restore execution is not included" in all_text or "Nothing is restored" in all_text
+assert "Restore preview" in all_text or "Restore Preview" in all_text
+assert "The developer link opens externally" not in all_text
 assert '@"architecture": @"iphoneos-arm64"' in all_text
 assert '@"jailbreakPrefix"' not in (ROOT / "Core/ATMBackupManager.m").read_text()
 assert '@"iOSVersion"' not in (ROOT / "Core/ATMBackupManager.m").read_text()

@@ -1,7 +1,8 @@
 Package: com.aaz.tweakmanager
 Name: AAZ Tweak Manager
-Version: 0.1.0~beta7
+Version: 0.1.0~beta8
 Architecture: iphoneos-arm64
+Priority: optional
 Description: Back up personally installed jailbreak packages, sources, and installation history.
 Maintainer: AAZ
 Author: AAZ

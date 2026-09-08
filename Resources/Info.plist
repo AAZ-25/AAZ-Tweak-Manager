@@ -17,7 +17,7 @@
     <key>CFBundleShortVersionString</key>
     <string>0.1.0</string>
     <key>CFBundleVersion</key>
-    <string>7</string>
+    <string>8</string>
     <key>CFBundleDocumentTypes</key>
     <array>
         <dict>
@@ -64,6 +64,8 @@
         </dict>
     </dict>
     <key>LSRequiresIPhoneOS</key>
+    <true/>
+    <key>LSSupportsOpeningDocumentsInPlace</key>
     <true/>
     <key>MinimumOSVersion</key>
     <string>15.0</string>

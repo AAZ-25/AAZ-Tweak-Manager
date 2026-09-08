@@ -98,6 +98,13 @@ static NSData *ATMDecryptArchive(NSData *container, NSString *password, NSError 
 - (NSURL *)stageImportFromURL:(NSURL *)sourceURL error:(NSError **)error {
     [NSUserDefaults.standardUserDefaults setObject:@"copying" forKey:ATMLastImportStageKey]; [NSUserDefaults.standardUserDefaults setInteger:0 forKey:ATMLastImportErrorCodeKey];
     if (!sourceURL) { if (error) *error = ATMBackupError(51, @"No backup file was selected."); return nil; }
+    NSNumber *isDirectory = nil;
+    [sourceURL getResourceValue:&isDirectory forKey:NSURLIsDirectoryKey error:nil];
+    if (isDirectory.boolValue) {
+        if (error) *error = ATMBackupError(56, @"Select a backup file, not a folder.");
+        [NSUserDefaults.standardUserDefaults setObject:@"invalid-selection" forKey:ATMLastImportStageKey]; [NSUserDefaults.standardUserDefaults setInteger:56 forKey:ATMLastImportErrorCodeKey];
+        return nil;
+    }
     NSURL *staged = [self.backupDirectory URLByAppendingPathComponent:[NSString stringWithFormat:@".%@.import.staged", NSUUID.UUID.UUIDString]];
     BOOL accessed = [sourceURL startAccessingSecurityScopedResource];
     BOOL readable = [NSFileManager.defaultManager isReadableFileAtPath:sourceURL.path];
