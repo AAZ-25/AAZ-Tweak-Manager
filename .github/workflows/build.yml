@@ -38,7 +38,7 @@ jobs:
           DEB="$(find packages -name '*.deb' -type f | head -n 1)"
           test -n "$DEB"
           test "$(dpkg-deb -f "$DEB" Package)" = "com.aaz.tweakmanager"
-          test "$(dpkg-deb -f "$DEB" Version)" = "0.1.0~beta6"
+          test "$(dpkg-deb -f "$DEB" Version)" = "0.1.0~beta7"
           dpkg-deb -c "$DEB" | grep -q 'AAZTweakManager.app/AAZTweakManager'
           dpkg-deb -c "$DEB" | grep -q 'AAZTweakManager.app/AppIcon60x60@3x.png'
           dpkg-deb -x "$DEB" "$RUNNER_TEMP/aaz-package"
@@ -51,6 +51,9 @@ jobs:
           strings "$RUNNER_TEMP/aaz-package/var/jb/Applications/AAZTweakManager.app/AAZTweakManager" | grep -q 'Encrypted Backup'
           strings "$RUNNER_TEMP/aaz-package/var/jb/Applications/AAZTweakManager.app/AAZTweakManager" | grep -q 'Backup Health & Readiness'
           strings "$RUNNER_TEMP/aaz-package/var/jb/Applications/AAZTweakManager.app/AAZTweakManager" | grep -q 'Selection Profiles'
+          strings "$RUNNER_TEMP/aaz-package/var/jb/Applications/AAZTweakManager.app/AAZTweakManager" | grep -q 'Manage Profiles'
+          strings "$RUNNER_TEMP/aaz-package/var/jb/Applications/AAZTweakManager.app/AAZTweakManager" | grep -q 'Preparing Import'
+          strings "$RUNNER_TEMP/aaz-package/var/jb/Applications/AAZTweakManager.app/AAZTweakManager" | grep -q 'x.com/_kkk2'
           strings "$RUNNER_TEMP/aaz-package/var/jb/Applications/AAZTweakManager.app/AAZTweakManager" | grep -q 'Only a healthy backup can be imported'
           cp "$DEB" AAZ-Tweak-Manager-rootless.deb
           shasum -a 256 AAZ-Tweak-Manager-rootless.deb

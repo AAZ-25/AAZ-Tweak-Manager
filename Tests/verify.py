@@ -19,13 +19,13 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "6"
+assert info["CFBundleVersion"] == "7"
 assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["AppIcon60x60"]
 
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta6" in control
+assert "Version: 0.1.0~beta7" in control
 
 excluded_directories = {".git", ".theos-build", "packages"}
 public_files = [
@@ -83,6 +83,13 @@ assert "Only a healthy backup can be imported" in all_text
 assert "Backup Health & Readiness" in all_text
 assert "Backup Changes" in all_text
 assert "Selection Profiles" in all_text
+assert "Manage Profiles" in all_text
+assert "Version %@ — Build %@" in all_text
+assert "https://x.com/_kkk2" in all_text
+assert "Preparing Import" in all_text
+assert "import.staged" in all_text
+assert "importStage=%@" in all_text
+assert "importErrorCode=%ld" in all_text
 assert "Search backups" in all_text
 assert "Pin" in all_text and "Unpin" in all_text
 assert "#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>" in all_text

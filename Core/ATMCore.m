@@ -353,6 +353,8 @@ NSURL *ATMWriteDiagnosticReport(ATMEnvironment *environment,
         [NSString stringWithFormat:@"excludedProtected=%lu", (unsigned long)protectedPackage],
         [NSString stringWithFormat:@"excludedOther=%lu", (unsigned long)otherExcluded],
         [NSString stringWithFormat:@"selected=%lu", (unsigned long)selectedPackageIDs.count],
+        [NSString stringWithFormat:@"importStage=%@", [NSUserDefaults.standardUserDefaults stringForKey:@"ATMLastImportStageV1"] ?: @"not-run"],
+        [NSString stringWithFormat:@"importErrorCode=%ld", (long)[NSUserDefaults.standardUserDefaults integerForKey:@"ATMLastImportErrorCodeV1"]],
         @"privacy=counts-and-stage-flags-only"
     ];
     NSString *contents = [[lines componentsJoinedByString:@"\n"] stringByAppendingString:@"\n"];

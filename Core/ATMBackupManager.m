@@ -11,6 +11,8 @@ extern char **environ;
 NSString *const ATMBackupErrorDomain = @"com.aaz.tweakmanager.backup";
 static NSString *const ATMProfilesKey = @"ATMBackupProfilesV1";
 static NSString *const ATMPinnedBackupsKey = @"ATMPinnedBackupsV1";
+static NSString *const ATMLastImportStageKey = @"ATMLastImportStageV1";
+static NSString *const ATMLastImportErrorCodeKey = @"ATMLastImportErrorCodeV1";
 static const NSUInteger ATMEncryptedHeaderLength = 44;
 static const NSUInteger ATMEncryptedTagLength = CC_SHA256_DIGEST_LENGTH;
 
@@ -93,7 +95,70 @@ static NSData *ATMDecryptArchive(NSData *container, NSString *password, NSError 
 - (NSDictionary *)manifestForBackup:(NSURL *)backupURL error:(NSError **)error { return [self manifestForBackup:backupURL password:nil error:error]; }
 - (NSDictionary *)manifestForBackup:(NSURL *)backupURL password:(NSString *)password error:(NSError **)error { NSURL *readable = [self temporaryReadableArchiveForURL:backupURL password:password error:error]; if (!readable) return nil; NSData *data = ATMReadStoredZipEntry(readable, @"manifest.json", error); if (![readable isEqual:backupURL]) [NSFileManager.defaultManager removeItemAtURL:readable error:nil]; NSDictionary *manifest = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:error] : nil; if (![manifest isKindOfClass:NSDictionary.class] || ![manifest[@"format"] isEqualToString:@"com.aaz.tweakmanager.backup"] || [manifest[@"formatVersion"] integerValue] != 1 || ![manifest[@"packages"] isKindOfClass:NSArray.class] || ![manifest[@"sources"] isKindOfClass:NSArray.class]) { if (error && !*error) *error = ATMBackupError(31, @"Unsupported or invalid backup."); return nil; } return manifest; }
 - (NSDictionary *)backupReportForURL:(NSURL *)backupURL password:(NSString *)password error:(NSError **)error { NSURL *readable = [self temporaryReadableArchiveForURL:backupURL password:password error:error]; if (!readable) return nil; NSArray *entries = ATMValidateStoredZipArchive(readable, error); if (!entries) { if (![readable isEqual:backupURL]) [NSFileManager.defaultManager removeItemAtURL:readable error:nil]; return nil; } NSMutableSet *paths = [NSMutableSet set]; NSMutableDictionary *sizes = [NSMutableDictionary dictionary]; for (NSDictionary *entry in entries) { [paths addObject:entry[@"path"]]; sizes[entry[@"path"]] = entry[@"size"]; } NSData *manifestData = ATMReadStoredZipEntry(readable, @"manifest.json", error); NSDictionary *manifest = manifestData ? [NSJSONSerialization JSONObjectWithData:manifestData options:0 error:error] : nil; if (![manifest isKindOfClass:NSDictionary.class] || ![manifest[@"format"] isEqualToString:@"com.aaz.tweakmanager.backup"] || [manifest[@"formatVersion"] integerValue] != 1 || ![manifest[@"packages"] isKindOfClass:NSArray.class] || ![manifest[@"sources"] isKindOfClass:NSArray.class]) { if (![readable isEqual:backupURL]) [NSFileManager.defaultManager removeItemAtURL:readable error:nil]; if (error && !*error) *error = ATMBackupError(31, @"Unsupported or invalid backup."); return nil; } NSUInteger missingPayloads = 0, badHashes = 0, cached = 0; unsigned long long cachedBytes = 0; for (NSDictionary *package in manifest[@"packages"] ?: @[]) if ([package[@"debStatus"] isEqualToString:@"exact-cache"]) { cached++; NSString *path = package[@"debPath"]; if (!path.length || ![paths containsObject:path]) { missingPayloads++; continue; } cachedBytes += [sizes[path] unsignedLongLongValue]; NSData *payload = ATMReadStoredZipEntry(readable, path, nil); if (!payload || ![ATMSHA256ForData(payload) isEqualToString:package[@"sha256"] ?: @""]) badHashes++; } for (NSDictionary *source in manifest[@"sources"] ?: @[]) { NSString *path = source[@"backupPath"]; if (!path.length || ![paths containsObject:path]) missingPayloads++; } if (![readable isEqual:backupURL]) [NSFileManager.defaultManager removeItemAtURL:readable error:nil]; NSNumber *fileSize = nil, *availableBytes = nil; [backupURL getResourceValue:&fileSize forKey:NSURLFileSizeKey error:nil]; [self.backupDirectory getResourceValue:&availableBytes forKey:NSURLVolumeAvailableCapacityForImportantUsageKey error:nil]; NSString *health = (missingPayloads || badHashes) ? @"Incomplete" : @"Healthy"; return @{ @"health": health, @"encrypted": @([self isEncryptedBackup:backupURL]), @"packageCount": @([manifest[@"packages"] count]), @"sourceCount": @([manifest[@"sources"] count]), @"cachedDEBCount": @(cached), @"cachedBytes": @(cachedBytes), @"fileSize": fileSize ?: @0, @"availableBytes": availableBytes ?: @0, @"missingPayloadCount": @(missingPayloads), @"badHashCount": @(badHashes), @"manifest": manifest }; }
-- (NSURL *)importBackupFromURL:(NSURL *)sourceURL password:(NSString *)password error:(NSError **)error { BOOL accessed = [sourceURL startAccessingSecurityScopedResource]; NSDictionary *report = [self backupReportForURL:sourceURL password:password error:error]; if (!report || ![report[@"health"] isEqualToString:@"Healthy"]) { if (accessed) [sourceURL stopAccessingSecurityScopedResource]; if (report && error) *error = ATMBackupError(50, @"Only a healthy backup can be imported."); return nil; } NSString *stamp = [[ATMISODateString([NSDate date]) stringByReplacingOccurrencesOfString:@":" withString:@"-"] stringByReplacingOccurrencesOfString:@"." withString:@"-"]; NSURL *partial = [self.backupDirectory URLByAppendingPathComponent:[NSString stringWithFormat:@".%@.import.partial", NSUUID.UUID.UUIDString]], *final = [self.backupDirectory URLByAppendingPathComponent:[NSString stringWithFormat:@"AAZ-Imported-Backup-%@.aaztmbackup", stamp]]; BOOL ok = [NSFileManager.defaultManager copyItemAtURL:sourceURL toURL:partial error:error]; if (accessed) [sourceURL stopAccessingSecurityScopedResource]; if (!ok || ![NSFileManager.defaultManager moveItemAtURL:partial toURL:final error:error]) { [NSFileManager.defaultManager removeItemAtURL:partial error:nil]; return nil; } [NSFileManager.defaultManager setAttributes:@{NSFileProtectionKey: NSFileProtectionCompleteUntilFirstUserAuthentication} ofItemAtPath:final.path error:nil]; [self.ledger recordEvent:@"backup-imported" packageID:nil details:@{ @"packageCount": report[@"packageCount"] ?: @0, @"sourceCount": report[@"sourceCount"] ?: @0, @"encrypted": report[@"encrypted"] ?: @NO }]; return final; }
+- (NSURL *)stageImportFromURL:(NSURL *)sourceURL error:(NSError **)error {
+    [NSUserDefaults.standardUserDefaults setObject:@"copying" forKey:ATMLastImportStageKey]; [NSUserDefaults.standardUserDefaults setInteger:0 forKey:ATMLastImportErrorCodeKey];
+    if (!sourceURL) { if (error) *error = ATMBackupError(51, @"No backup file was selected."); return nil; }
+    NSURL *staged = [self.backupDirectory URLByAppendingPathComponent:[NSString stringWithFormat:@".%@.import.staged", NSUUID.UUID.UUIDString]];
+    BOOL accessed = [sourceURL startAccessingSecurityScopedResource];
+    BOOL readable = [NSFileManager.defaultManager isReadableFileAtPath:sourceURL.path];
+    BOOL copied = readable && [NSFileManager.defaultManager copyItemAtURL:sourceURL toURL:staged error:error];
+    if (accessed) [sourceURL stopAccessingSecurityScopedResource];
+    if (!copied) {
+        [NSFileManager.defaultManager removeItemAtURL:staged error:nil];
+        if (error) *error = ATMBackupError(52, @"The selected file could not be copied from Files. Try saving it On My iPhone, then select it again.");
+        [NSUserDefaults.standardUserDefaults setObject:@"copy-failed" forKey:ATMLastImportStageKey]; [NSUserDefaults.standardUserDefaults setInteger:52 forKey:ATMLastImportErrorCodeKey];
+        return nil;
+    }
+    NSNumber *size = nil;
+    [staged getResourceValue:&size forKey:NSURLFileSizeKey error:nil];
+    if (size.unsignedLongLongValue == 0) {
+        [NSFileManager.defaultManager removeItemAtURL:staged error:nil];
+        if (error) *error = ATMBackupError(53, @"The selected backup file is empty.");
+        [NSUserDefaults.standardUserDefaults setObject:@"empty-file" forKey:ATMLastImportStageKey]; [NSUserDefaults.standardUserDefaults setInteger:53 forKey:ATMLastImportErrorCodeKey];
+        return nil;
+    }
+    [NSFileManager.defaultManager setAttributes:@{NSFileProtectionKey: NSFileProtectionCompleteUntilFirstUserAuthentication} ofItemAtPath:staged.path error:nil];
+    [NSUserDefaults.standardUserDefaults setObject:@"staged" forKey:ATMLastImportStageKey];
+    return staged;
+}
+- (void)discardStagedImportAtURL:(NSURL *)stagedURL {
+    if (!stagedURL || ![stagedURL.lastPathComponent hasSuffix:@".import.staged"] || ![[stagedURL.URLByDeletingLastPathComponent URLByStandardizingPath] isEqual:[self.backupDirectory URLByStandardizingPath]]) return;
+    [NSFileManager.defaultManager removeItemAtURL:stagedURL error:nil];
+}
+- (NSURL *)importBackupFromURL:(NSURL *)sourceURL password:(NSString *)password error:(NSError **)error {
+    BOOL alreadyStaged = [sourceURL.lastPathComponent hasSuffix:@".import.staged"] && [[sourceURL.URLByDeletingLastPathComponent URLByStandardizingPath] isEqual:[self.backupDirectory URLByStandardizingPath]];
+    NSURL *staged = alreadyStaged ? sourceURL : [self stageImportFromURL:sourceURL error:error];
+    if (!staged) return nil;
+    [NSUserDefaults.standardUserDefaults setObject:@"validating" forKey:ATMLastImportStageKey];
+    NSString *incomingHash = ATMSHA256ForFile(staged, nil);
+    for (NSURL *existing in self.availableBackups) {
+        if (incomingHash.length && [incomingHash isEqualToString:ATMSHA256ForFile(existing, nil)]) {
+            [self discardStagedImportAtURL:staged];
+            if (error) *error = ATMBackupError(54, @"This backup is already in your Backups list.");
+            [NSUserDefaults.standardUserDefaults setObject:@"duplicate" forKey:ATMLastImportStageKey]; [NSUserDefaults.standardUserDefaults setInteger:54 forKey:ATMLastImportErrorCodeKey];
+            return nil;
+        }
+    }
+    NSDictionary *report = [self backupReportForURL:staged password:password error:error];
+    if (!report || ![report[@"health"] isEqualToString:@"Healthy"]) {
+        [self discardStagedImportAtURL:staged];
+        if (report && error) *error = ATMBackupError(50, @"Only a healthy backup can be imported.");
+        NSInteger code = error && *error ? (*error).code : 50; [NSUserDefaults.standardUserDefaults setObject:@"validation-failed" forKey:ATMLastImportStageKey]; [NSUserDefaults.standardUserDefaults setInteger:code forKey:ATMLastImportErrorCodeKey];
+        return nil;
+    }
+    NSString *stamp = [[ATMISODateString([NSDate date]) stringByReplacingOccurrencesOfString:@":" withString:@"-"] stringByReplacingOccurrencesOfString:@"." withString:@"-"];
+    NSURL *final = [self.backupDirectory URLByAppendingPathComponent:[NSString stringWithFormat:@"AAZ-Imported-Backup-%@.aaztmbackup", stamp]];
+    if (![NSFileManager.defaultManager moveItemAtURL:staged toURL:final error:error]) {
+        [self discardStagedImportAtURL:staged];
+        if (error) *error = ATMBackupError(55, @"The verified backup could not be added to local storage.");
+        [NSUserDefaults.standardUserDefaults setObject:@"finalize-failed" forKey:ATMLastImportStageKey]; [NSUserDefaults.standardUserDefaults setInteger:55 forKey:ATMLastImportErrorCodeKey];
+        return nil;
+    }
+    [NSFileManager.defaultManager setAttributes:@{NSFileProtectionKey: NSFileProtectionCompleteUntilFirstUserAuthentication} ofItemAtPath:final.path error:nil];
+    [self.ledger recordEvent:@"backup-imported" packageID:nil details:@{ @"packageCount": report[@"packageCount"] ?: @0, @"sourceCount": report[@"sourceCount"] ?: @0, @"encrypted": report[@"encrypted"] ?: @NO }];
+    [NSUserDefaults.standardUserDefaults setObject:@"completed" forKey:ATMLastImportStageKey]; [NSUserDefaults.standardUserDefaults setInteger:0 forKey:ATMLastImportErrorCodeKey];
+    return final;
+}
 - (NSDictionary *)compareBackup:(NSURL *)olderURL withBackup:(NSURL *)newerURL error:(NSError **)error { NSDictionary *oldReport = [self backupReportForURL:olderURL password:nil error:error], *newReport = oldReport ? [self backupReportForURL:newerURL password:nil error:error] : nil; NSDictionary *older = oldReport[@"manifest"], *newer = newReport[@"manifest"]; if (!older || !newer) return nil; NSMutableDictionary *oldVersions = [NSMutableDictionary dictionary], *newVersions = [NSMutableDictionary dictionary]; for (NSDictionary *package in older[@"packages"]) if ([package[@"packageID"] isKindOfClass:NSString.class]) oldVersions[package[@"packageID"]] = package[@"version"] ?: @""; for (NSDictionary *package in newer[@"packages"]) if ([package[@"packageID"] isKindOfClass:NSString.class]) newVersions[package[@"packageID"]] = package[@"version"] ?: @""; NSUInteger added = 0, removed = 0, updated = 0, unchanged = 0; for (NSString *packageID in newVersions) { if (!oldVersions[packageID]) added++; else if (![oldVersions[packageID] isEqualToString:newVersions[packageID]]) updated++; else unchanged++; } for (NSString *packageID in oldVersions) if (!newVersions[packageID]) removed++; return @{ @"added": @(added), @"removed": @(removed), @"updated": @(updated), @"unchanged": @(unchanged) }; }
 - (NSDictionary *)restorePreviewForBackup:(NSURL *)backupURL installedPackages:(NSArray<ATMPackageRecord *> *)installed error:(NSError **)error { NSDictionary *manifest = [self manifestForBackup:backupURL error:error]; if (!manifest) return @{}; NSMutableDictionary *installedByID = [NSMutableDictionary dictionary]; for (ATMPackageRecord *record in installed) installedByID[record.packageID] = record; NSMutableArray *missing = [NSMutableArray array], *different = [NSMutableArray array], *present = [NSMutableArray array], *unavailable = [NSMutableArray array]; for (NSDictionary *package in manifest[@"packages"] ?: @[]) { NSString *packageID = package[@"packageID"] ?: @""; ATMPackageRecord *current = installedByID[packageID]; if (!current) [missing addObject:packageID]; else if (![current.version isEqualToString:package[@"version"] ?: @""]) [different addObject:packageID]; else [present addObject:packageID]; if ([package[@"debStatus"] isEqualToString:@"unavailable"]) [unavailable addObject:packageID]; } return @{ @"missing": missing, @"differentVersion": different, @"alreadyInstalled": present, @"packagePayloadUnavailable": unavailable, @"sourceCount": @([manifest[@"sources"] count]), @"safeToExecute": @NO, @"reason": @"This beta provides preview only; no package transaction is executed." }; }
 - (NSArray<NSDictionary *> *)savedProfiles { NSArray *profiles = [NSUserDefaults.standardUserDefaults arrayForKey:ATMProfilesKey]; return [profiles isKindOfClass:NSArray.class] ? profiles : @[]; }

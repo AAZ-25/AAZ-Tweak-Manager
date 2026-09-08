@@ -74,6 +74,54 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
     [controller presentViewController:alert animated:YES completion:nil];
 }
 
+@interface ATMProfilesController : UITableViewController
+@property(nonatomic, copy) NSArray<NSDictionary *> *profiles;
+@end
+
+@implementation ATMProfilesController
+- (instancetype)init { return [super initWithStyle:UITableViewStyleInsetGrouped]; }
+- (void)viewDidLoad { [super viewDidLoad]; self.title = @"Selection Profiles"; }
+- (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self reloadProfiles]; }
+- (void)reloadProfiles {
+    self.profiles = [ATMAppModel.shared.backupManager.savedProfiles sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) { return [a[@"name"] localizedCaseInsensitiveCompare:b[@"name"]]; }];
+    [self.tableView reloadData];
+    if (self.profiles.count) { self.tableView.backgroundView = nil; return; }
+    UILabel *empty = [UILabel new]; empty.text = @"No Saved Profiles\n\nSave one from My Tweaks → Select → Save Current Profile."; empty.textAlignment = NSTextAlignmentCenter; empty.numberOfLines = 0; empty.textColor = UIColor.secondaryLabelColor; empty.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody]; self.tableView.backgroundView = empty;
+}
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { (void)tableView; (void)section; return self.profiles.count; }
+- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section { (void)tableView; (void)section; return self.profiles.count ? @"Tap a profile for Load, Rename, or Duplicate. Swipe left to delete it. Profiles stay only on this device." : nil; }
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"profile"] ?: [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:@"profile"];
+    NSDictionary *profile = self.profiles[indexPath.row]; NSArray *packageIDs = [profile[@"packageIDs"] isKindOfClass:NSArray.class] ? profile[@"packageIDs"] : @[]; NSDate *updated = ATMDateFromISO(profile[@"updatedAt"]);
+    cell.textLabel.text = profile[@"name"] ?: @"Profile"; cell.detailTextLabel.text = [NSString stringWithFormat:@"%lu packages • Updated %@", (unsigned long)packageIDs.count, ATMShortDateTime(updated)]; cell.imageView.image = [UIImage systemImageNamed:@"person.crop.square"]; cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator; return cell;
+}
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
+    [tableView deselectRowAtIndexPath:indexPath animated:YES]; NSDictionary *profile = self.profiles[indexPath.row]; NSString *name = profile[@"name"] ?: @"Profile";
+    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:name message:@"Choose an action for this selection profile." preferredStyle:UIAlertControllerStyleActionSheet];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Load Profile" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) { [self loadProfile:profile]; }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Rename" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) { [self promptToRenameProfile:profile]; }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Duplicate" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) { [self duplicateProfile:profile]; }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]]; sheet.popoverPresentationController.sourceView = self.view; sheet.popoverPresentationController.sourceRect = self.view.bounds; [self presentViewController:sheet animated:YES completion:nil];
+}
+- (void)loadProfile:(NSDictionary *)profile {
+    NSSet *target = [NSSet setWithArray:profile[@"packageIDs"] ?: @[]]; NSMutableSet *installed = [NSMutableSet set]; NSSet *current = ATMAppModel.shared.ledger.selectedPackageIDs;
+    for (ATMPackageRecord *record in ATMAppModel.shared.packages) if ([target containsObject:record.packageID]) [installed addObject:record.packageID];
+    [ATMAppModel.shared.ledger setSelected:NO forPackageIDs:current.allObjects]; [ATMAppModel.shared.ledger setSelected:YES forPackageIDs:installed.allObjects]; [ATMAppModel.shared.ledger recordEvent:@"profile-loaded" packageID:nil details:@{ @"count": @(installed.count) }]; [NSNotificationCenter.defaultCenter postNotificationName:ATMDataChangedNotification object:nil];
+    UIAlertController *done = [UIAlertController alertControllerWithTitle:@"Profile Loaded" message:[NSString stringWithFormat:@"%lu installed packages are now selected.", (unsigned long)installed.count] preferredStyle:UIAlertControllerStyleAlert]; [done addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleDefault handler:nil]]; [self presentViewController:done animated:YES completion:nil];
+}
+- (void)promptToRenameProfile:(NSDictionary *)profile {
+    NSString *oldName = profile[@"name"] ?: @"Profile"; NSSet *packageIDs = [NSSet setWithArray:profile[@"packageIDs"] ?: @[]]; UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Rename Profile" message:@"The saved package selection will not change." preferredStyle:UIAlertControllerStyleAlert];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *field) { field.text = oldName; field.clearButtonMode = UITextFieldViewModeWhileEditing; }]; [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Rename" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) { NSString *newName = [alert.textFields.firstObject.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]; if (!newName.length || newName.length > 40) { ATMShowError(self, @"Profile not renamed", [NSError errorWithDomain:@"ATM" code:61 userInfo:@{NSLocalizedDescriptionKey: @"Use a profile name between 1 and 40 characters."}]); return; } for (NSDictionary *item in ATMAppModel.shared.backupManager.savedProfiles) { NSString *existing = item[@"name"] ?: @""; if ([existing caseInsensitiveCompare:newName] == NSOrderedSame && [existing caseInsensitiveCompare:oldName] != NSOrderedSame) { ATMShowError(self, @"Profile not renamed", [NSError errorWithDomain:@"ATM" code:62 userInfo:@{NSLocalizedDescriptionKey: @"A profile with that name already exists."}]); return; } } NSError *error = nil; if ([oldName caseInsensitiveCompare:newName] != NSOrderedSame) [ATMAppModel.shared.backupManager deleteProfileNamed:oldName error:nil]; if (![ATMAppModel.shared.backupManager saveProfileNamed:newName packageIDs:packageIDs error:&error]) { ATMShowError(self, @"Profile not renamed", error); return; } [ATMAppModel.shared.ledger recordEvent:@"profile-renamed" packageID:nil details:nil]; [self reloadProfiles]; }]]; [self presentViewController:alert animated:YES completion:nil];
+}
+- (void)duplicateProfile:(NSDictionary *)profile {
+    NSString *base = [NSString stringWithFormat:@"%@ Copy", profile[@"name"] ?: @"Profile"]; NSString *candidate = base; NSUInteger suffix = 2; NSSet *names = [NSSet setWithArray:[ATMAppModel.shared.backupManager.savedProfiles valueForKey:@"name"]]; while ([names containsObject:candidate]) candidate = [NSString stringWithFormat:@"%@ %lu", base, (unsigned long)suffix++]; NSSet *packageIDs = [NSSet setWithArray:profile[@"packageIDs"] ?: @[]]; NSError *error = nil; if (![ATMAppModel.shared.backupManager saveProfileNamed:candidate packageIDs:packageIDs error:&error]) { ATMShowError(self, @"Profile not duplicated", error); return; } [ATMAppModel.shared.ledger recordEvent:@"profile-duplicated" packageID:nil details:@{ @"count": @(packageIDs.count) }]; [self reloadProfiles];
+}
+- (UISwipeActionsConfiguration *)tableView:(UITableView *)tableView trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
+    (void)tableView; NSDictionary *profile = self.profiles[indexPath.row]; UIContextualAction *delete = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleDestructive title:@"Delete" handler:^(__unused UIContextualAction *action, __unused UIView *view, void (^completion)(BOOL)) { NSString *name = profile[@"name"] ?: @"Profile"; UIAlertController *confirm = [UIAlertController alertControllerWithTitle:@"Delete Profile?" message:@"This removes only the saved profile. Current selections and backup files will not change." preferredStyle:UIAlertControllerStyleAlert]; [confirm addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(__unused UIAlertAction *a) { completion(NO); }]]; [confirm addAction:[UIAlertAction actionWithTitle:@"Delete" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *a) { BOOL ok = [ATMAppModel.shared.backupManager deleteProfileNamed:name error:nil]; if (ok) [ATMAppModel.shared.ledger recordEvent:@"profile-deleted" packageID:nil details:nil]; completion(ok); [self reloadProfiles]; }]]; [self presentViewController:confirm animated:YES completion:nil]; }]; UISwipeActionsConfiguration *configuration = [UISwipeActionsConfiguration configurationWithActions:@[delete]]; configuration.performsFirstActionWithFullSwipe = NO; return configuration;
+}
+@end
+
 @interface ATMPackageSwitch : UISwitch
 @property(nonatomic, copy) NSString *packageID;
 @end
@@ -143,12 +191,13 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
     if (!selectedCount) unselectAll.attributes = UIMenuElementAttributesDisabled;
     unselectAll.attributes |= UIMenuElementAttributesDestructive;
     UIAction *saveProfile = [UIAction actionWithTitle:@"Save Current Profile" image:[UIImage systemImageNamed:@"bookmark"] identifier:nil handler:^(__unused UIAction *action) { [weakSelf promptToSaveProfile]; }];
+    UIAction *manageProfiles = [UIAction actionWithTitle:@"Manage Profiles" image:[UIImage systemImageNamed:@"person.crop.square"] identifier:nil handler:^(__unused UIAction *action) { [weakSelf.navigationController pushViewController:[ATMProfilesController new] animated:YES]; }];
     NSMutableArray *profileActions = [NSMutableArray array];
     for (NSDictionary *profile in ATMAppModel.shared.backupManager.savedProfiles) {
         NSString *name = profile[@"name"] ?: @"Profile";
         [profileActions addObject:[UIAction actionWithTitle:name image:[UIImage systemImageNamed:@"folder"] identifier:nil handler:^(__unused UIAction *action) { [weakSelf loadProfileNamed:name]; }]];
     }
-    UIMenu *profiles = [UIMenu menuWithTitle:@"Selection Profiles" image:[UIImage systemImageNamed:@"person.crop.square"] identifier:nil options:0 children:[@[saveProfile] arrayByAddingObjectsFromArray:profileActions]];
+    UIMenu *profiles = [UIMenu menuWithTitle:@"Selection Profiles" image:[UIImage systemImageNamed:@"person.crop.square"] identifier:nil options:0 children:[@[saveProfile, manageProfiles] arrayByAddingObjectsFromArray:profileActions]];
     self.selectionButton.menu = [UIMenu menuWithTitle:@"Shown Packages" children:@[selectAll, unselectAll, profiles]];
 }
 - (void)promptToSaveProfile {
@@ -156,7 +205,7 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Save Selection Profile" message:@"Profiles stay private on this device and let you reuse a package selection." preferredStyle:UIAlertControllerStyleAlert];
     [alert addTextFieldWithConfigurationHandler:^(UITextField *field) { field.placeholder = @"Profile name"; field.autocorrectionType = UITextAutocorrectionTypeNo; }];
     [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"Save" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) { NSError *error = nil; if (![ATMAppModel.shared.backupManager saveProfileNamed:alert.textFields.firstObject.text packageIDs:self.selectedPackageIDs error:&error]) ATMShowError(self, @"Profile not saved", error); [self configureSelectionMenu]; }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Save" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) { NSError *error = nil; if (![ATMAppModel.shared.backupManager saveProfileNamed:alert.textFields.firstObject.text packageIDs:self.selectedPackageIDs error:&error]) ATMShowError(self, @"Profile not saved", error); else [ATMAppModel.shared.ledger recordEvent:@"profile-saved" packageID:nil details:@{ @"count": @(self.selectedPackageIDs.count) }]; [self configureSelectionMenu]; }]];
     [self presentViewController:alert animated:YES completion:nil];
 }
 - (void)loadProfileNamed:(NSString *)name {
@@ -336,8 +385,34 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
 }
 - (void)compareBackup:(NSURL *)older with:(NSURL *)newer { NSError *error = nil; NSDictionary *result = [ATMAppModel.shared.backupManager compareBackup:older withBackup:newer error:&error]; if (!result) { ATMShowError(self, @"Comparison unavailable", error); return; } NSString *message = [NSString stringWithFormat:@"Added: %@\nRemoved: %@\nUpdated: %@\nUnchanged: %@\n\nOnly counts are shown; package identities stay private.", result[@"added"], result[@"removed"], result[@"updated"], result[@"unchanged"]]; UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Backup Changes" message:message preferredStyle:UIAlertControllerStyleAlert]; [alert addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleCancel handler:nil]]; [self presentViewController:alert animated:YES completion:nil]; }
 - (void)importBackup { UTType *backupType = [UTType typeWithIdentifier:@"com.aaz.tweakmanager.backup"], *dataType = [UTType typeWithIdentifier:@"public.data"]; NSMutableArray<UTType *> *types = [NSMutableArray array]; if (backupType) [types addObject:backupType]; if (dataType) [types addObject:dataType]; if (!types.count) { ATMShowError(self, @"Import unavailable", [NSError errorWithDomain:@"ATM" code:6 userInfo:@{NSLocalizedDescriptionKey: @"The system document type service is unavailable."}]); return; } UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:types asCopy:YES]; picker.delegate = self; picker.allowsMultipleSelection = NO; [self presentViewController:picker animated:YES completion:nil]; }
-- (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls { (void)controller; NSURL *url = urls.firstObject; if (!url) return; self.pendingImportURL = url; if ([ATMAppModel.shared.backupManager isEncryptedBackup:url]) [self promptForPasswordWithTitle:@"Import Encrypted Backup" completion:^(NSString *password) { [self performImport:url password:password]; }]; else [self performImport:url password:nil]; }
-- (void)performImport:(NSURL *)url password:(NSString *)password { UIAlertController *progress = [UIAlertController alertControllerWithTitle:@"Inspecting Import" message:@"The file will be copied only if every integrity check passes." preferredStyle:UIAlertControllerStyleAlert]; [self presentViewController:progress animated:YES completion:nil]; dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ NSError *error = nil; NSURL *imported = [ATMAppModel.shared.backupManager importBackupFromURL:url password:password error:&error]; dispatch_async(dispatch_get_main_queue(), ^{ self.pendingImportURL = nil; [progress dismissViewControllerAnimated:YES completion:^{ if (!imported) { ATMShowError(self, @"Import failed", error); return; } [self reloadData]; UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Backup Imported" message:@"The archive passed health and integrity checks. No restore action was executed." preferredStyle:UIAlertControllerStyleAlert]; [alert addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleCancel handler:nil]]; [self presentViewController:alert animated:YES completion:nil]; }]; }); }); }
+- (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
+    (void)controller;
+    NSURL *url = urls.firstObject;
+    if (!url) return;
+    UIAlertController *progress = [UIAlertController alertControllerWithTitle:@"Preparing Import" message:@"Copying the selected archive into protected temporary storage…" preferredStyle:UIAlertControllerStyleAlert];
+    [self presentViewController:progress animated:YES completion:nil];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSError *error = nil;
+        NSURL *staged = [ATMAppModel.shared.backupManager stageImportFromURL:url error:&error];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [progress dismissViewControllerAnimated:YES completion:^{
+                if (!staged) { ATMShowError(self, @"Import could not start", error); return; }
+                self.pendingImportURL = staged;
+                if ([ATMAppModel.shared.backupManager isEncryptedBackup:staged]) [self promptForImportPasswordForURL:staged];
+                else [self performImport:staged password:nil];
+            }];
+        });
+    });
+}
+- (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller { (void)controller; }
+- (void)promptForImportPasswordForURL:(NSURL *)url {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Import Encrypted Backup" message:@"The password is used only for this import and is never stored." preferredStyle:UIAlertControllerStyleAlert];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *field) { field.placeholder = @"Password"; field.secureTextEntry = YES; }];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(__unused UIAlertAction *action) { [ATMAppModel.shared.backupManager discardStagedImportAtURL:url]; self.pendingImportURL = nil; }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Continue" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) { [self performImport:url password:alert.textFields.firstObject.text ?: @""]; }]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+- (void)performImport:(NSURL *)url password:(NSString *)password { UIAlertController *progress = [UIAlertController alertControllerWithTitle:@"Inspecting Import" message:@"Checking format, archive integrity, and cached-DEB hashes before adding it." preferredStyle:UIAlertControllerStyleAlert]; [self presentViewController:progress animated:YES completion:nil]; dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ NSError *error = nil; NSURL *imported = [ATMAppModel.shared.backupManager importBackupFromURL:url password:password error:&error]; dispatch_async(dispatch_get_main_queue(), ^{ self.pendingImportURL = nil; [progress dismissViewControllerAnimated:YES completion:^{ if (!imported) { ATMShowError(self, @"Import failed", error); return; } [self reloadData]; UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Backup Imported" message:@"The archive passed health and integrity checks. No restore action was executed." preferredStyle:UIAlertControllerStyleAlert]; [alert addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleCancel handler:nil]]; [self presentViewController:alert animated:YES completion:nil]; }]; }); }); }
 - (void)shareURL:(NSURL *)url { UIActivityViewController *activity = [[UIActivityViewController alloc] initWithActivityItems:@[url] applicationActivities:nil]; activity.popoverPresentationController.sourceView = self.view; activity.popoverPresentationController.sourceRect = self.view.bounds; [self presentViewController:activity animated:YES completion:nil]; }
 - (UISwipeActionsConfiguration *)tableView:(UITableView *)tableView leadingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath { (void)tableView; if (!self.backups.count) return nil; NSURL *url = self.backups[indexPath.row]; BOOL pinned = [ATMAppModel.shared.backupManager isBackupPinned:url]; UIContextualAction *pin = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleNormal title:pinned ? @"Unpin" : @"Pin" handler:^(__unused UIContextualAction *action, __unused UIView *view, void (^completion)(BOOL)) { [ATMAppModel.shared.backupManager setBackup:url pinned:!pinned]; completion(YES); [self reloadData]; }]; pin.backgroundColor = UIColor.systemBlueColor; return [UISwipeActionsConfiguration configurationWithActions:@[pin]]; }
 - (UISwipeActionsConfiguration *)tableView:(UITableView *)tableView trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath { (void)tableView; if (!self.backups.count) return nil; UIContextualAction *delete = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleDestructive title:@"Delete" handler:^(__unused UIContextualAction *action, __unused UIView *sourceView, void (^completion)(BOOL)) { NSURL *url = self.backups[indexPath.row]; UIAlertController *confirm = [UIAlertController alertControllerWithTitle:@"Delete Backup?" message:@"This permanently removes this backup from the device. Other backups and selections are unchanged." preferredStyle:UIAlertControllerStyleAlert]; [confirm addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(__unused UIAlertAction *a) { completion(NO); }]]; [confirm addAction:[UIAlertAction actionWithTitle:@"Delete" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *a) { NSError *error = nil; BOOL ok = [NSFileManager.defaultManager removeItemAtURL:url error:&error]; if (ok) { [ATMAppModel.shared.backupManager setBackup:url pinned:NO]; [ATMAppModel.shared.ledger recordEvent:@"backup-deleted" packageID:nil details:nil]; } completion(ok); [self reloadData]; if (!ok) ATMShowError(self, @"Delete failed", error); }]]; [self presentViewController:confirm animated:YES completion:nil]; }]; UISwipeActionsConfiguration *configuration = [UISwipeActionsConfiguration configurationWithActions:@[delete]]; configuration.performsFirstActionWithFullSwipe = NO; return configuration; }
@@ -414,7 +489,22 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
     }
     self.sections = sections;
     self.navigationItem.rightBarButtonItem.enabled = history.count > 0;
+    [self updateEmptyState];
     [self.tableView reloadData];
+}
+- (void)updateEmptyState {
+    if (self.sections.count) { self.tableView.backgroundView = nil; return; }
+    UIImageView *icon = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:self.filterControl.selectedSegmentIndex ? @"line.3.horizontal.decrease.circle" : @"clock.arrow.circlepath"]];
+    icon.tintColor = UIColor.systemBlueColor;
+    icon.contentMode = UIViewContentModeScaleAspectFit;
+    [icon.widthAnchor constraintEqualToConstant:46].active = YES;
+    [icon.heightAnchor constraintEqualToConstant:46].active = YES;
+    UILabel *title = [UILabel new]; title.font = [UIFont preferredFontForTextStyle:UIFontTextStyleTitle2]; title.textAlignment = NSTextAlignmentCenter; title.text = self.filterControl.selectedSegmentIndex ? @"No Matching Activity" : @"No Activity Yet";
+    UILabel *detail = [UILabel new]; detail.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody]; detail.textColor = UIColor.secondaryLabelColor; detail.textAlignment = NSTextAlignmentCenter; detail.numberOfLines = 0; detail.text = self.filterControl.selectedSegmentIndex ? @"Choose another filter to view activity." : @"Selections, package changes, profiles, and backups will appear here. History stays only on this device.";
+    UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[icon, title, detail]]; stack.axis = UILayoutConstraintAxisVertical; stack.alignment = UIStackViewAlignmentCenter; stack.spacing = 10; stack.translatesAutoresizingMaskIntoConstraints = NO;
+    UIView *container = [UIView new]; [container addSubview:stack];
+    [NSLayoutConstraint activateConstraints:@[[stack.centerXAnchor constraintEqualToAnchor:container.centerXAnchor], [stack.centerYAnchor constraintEqualToAnchor:container.centerYAnchor constant:-30], [stack.leadingAnchor constraintGreaterThanOrEqualToAnchor:container.leadingAnchor constant:32], [stack.trailingAnchor constraintLessThanOrEqualToAnchor:container.trailingAnchor constant:-32], [detail.widthAnchor constraintLessThanOrEqualToConstant:360]]];
+    self.tableView.backgroundView = container;
 }
 - (void)confirmClearHistory {
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Clear History?" message:@"This removes the local activity timeline. Your package selections and backup files will not be changed." preferredStyle:UIAlertControllerStyleAlert];
@@ -426,12 +516,12 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
     }]];
     [self presentViewController:alert animated:YES completion:nil];
 }
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { (void)tableView; return self.sections.count ?: 1; }
-- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { (void)tableView; return self.sections.count ? [self.sections[section][@"items"] count] : 1; }
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { (void)tableView; return self.sections.count; }
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { (void)tableView; return [self.sections[section][@"items"] count]; }
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section { (void)tableView; return self.sections.count ? self.sections[section][@"title"] : nil; }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView;
-    if (section != MAX(0, (NSInteger)self.sections.count - 1)) return nil;
+    if (!self.sections.count || section != (NSInteger)self.sections.count - 1) return nil;
     return @"History is stored only on this device. Clearing it does not change selections or delete backup files.";
 }
 - (NSString *)packageNameForID:(NSString *)packageID {
@@ -442,13 +532,6 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"history"] ?: [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:@"history"];
     cell.imageView.tintColor = UIColor.systemBlueColor;
-    if (!self.sections.count) {
-        cell.textLabel.text = self.filterControl.selectedSegmentIndex ? @"No Matching Activity" : @"No Activity Yet";
-        cell.detailTextLabel.text = self.filterControl.selectedSegmentIndex ? @"Choose another filter to view activity." : @"Selections, package changes, and backups will appear here.";
-        cell.imageView.image = [UIImage systemImageNamed:@"clock"];
-        cell.selectionStyle = UITableViewCellSelectionStyleNone;
-        return cell;
-    }
     NSDictionary *item = self.sections[indexPath.section][@"items"][indexPath.row];
     NSString *event = [item[@"event"] isKindOfClass:NSString.class] ? item[@"event"] : @"";
     NSDictionary *details = [item[@"details"] isKindOfClass:NSDictionary.class] ? item[@"details"] : @{};
@@ -464,7 +547,11 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
     else if ([event isEqualToString:@"backup-created"]) { title = @"Backup Created"; summary = [NSString stringWithFormat:@"%@ packages • %@ sources • %@ cached DEBs", details[@"packageCount"] ?: @0, details[@"sourceCount"] ?: @0, details[@"cachedDEBCount"] ?: @0]; symbol = @"checkmark.shield.fill"; }
     else if ([event isEqualToString:@"backup-imported"]) { title = @"Backup Imported"; summary = [NSString stringWithFormat:@"%@ packages • %@ sources • integrity verified", details[@"packageCount"] ?: @0, details[@"sourceCount"] ?: @0]; symbol = @"square.and.arrow.down.fill"; }
     else if ([event isEqualToString:@"backup-deleted"]) { title = @"Backup Deleted"; summary = @"Removed from this device"; symbol = @"trash.fill"; }
+    else if ([event isEqualToString:@"profile-saved"]) { title = @"Selection Profile Saved"; summary = [NSString stringWithFormat:@"%@ packages stored in the profile", details[@"count"] ?: @0]; symbol = @"bookmark.fill"; }
     else if ([event isEqualToString:@"profile-loaded"]) { title = @"Selection Profile Loaded"; summary = [NSString stringWithFormat:@"%@ installed packages selected", details[@"count"] ?: @0]; symbol = @"person.crop.square.fill"; }
+    else if ([event isEqualToString:@"profile-deleted"]) { title = @"Selection Profile Deleted"; summary = @"Current package selections were not changed"; symbol = @"trash.fill"; }
+    else if ([event isEqualToString:@"profile-renamed"]) { title = @"Selection Profile Renamed"; summary = @"The saved package selection was preserved"; symbol = @"pencil.circle.fill"; }
+    else if ([event isEqualToString:@"profile-duplicated"]) { title = @"Selection Profile Duplicated"; summary = [NSString stringWithFormat:@"%@ packages copied to a new profile", details[@"count"] ?: @0]; symbol = @"plus.square.on.square"; }
     NSDate *date = ATMDateFromISO(item[@"timestamp"]);
     static NSDateFormatter *timeFormatter; static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{ timeFormatter = [NSDateFormatter new]; timeFormatter.dateStyle = NSDateFormatterNoStyle; timeFormatter.timeStyle = NSDateFormatterShortStyle; });
@@ -483,14 +570,15 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
 - (instancetype)init { return [super initWithStyle:UITableViewStyleInsetGrouped]; }
 - (void)viewDidLoad { [super viewDidLoad]; self.title = @"Settings"; }
 - (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self.tableView reloadData]; }
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { (void)tableView; return 4; }
-- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { (void)tableView; return section == 2 ? 3 : 1; }
-- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section { (void)tableView; return @[@"Inventory", @"Profiles", @"Safety", @"Diagnostics"][section]; }
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { (void)tableView; return 5; }
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { (void)tableView; if (section == 2) return 3; if (section == 4) return 2; return 1; }
+- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section { (void)tableView; return @[@"Inventory", @"Profiles", @"Safety", @"Diagnostics", @"About"][section]; }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView;
     if (section == 1) return @"Selection profiles are stored only on this device. They contain a name and package selection; passwords are never stored.";
     if (section == 2) return @"AAZ Tweak Manager never transmits package, source, device, or account data and this beta does not execute restore transactions.";
     if (section == 3) return @"The diagnostic contains counts and stage flags only. It excludes package names, sources, paths, device identifiers, accounts, and credentials.";
+    if (section == 4) return @"The developer link opens externally. It is never written into backups or diagnostic files.";
     return nil;
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
@@ -506,18 +594,23 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
         NSArray *titles = @[@"Rootless only", @"Credentials excluded", @"Restore preview only"];
         NSArray *details = @[@"Reads the /var/jb APT and dpkg state.", @"auth.conf and embedded URL credentials are not exported.", @"No package installation, removal, or source write occurs."];
         cell.textLabel.text = titles[indexPath.row]; cell.detailTextLabel.text = details[indexPath.row]; cell.detailTextLabel.numberOfLines = 2; cell.imageView.image = [UIImage systemImageNamed:@"checkmark.shield"];
-    } else {
+    } else if (indexPath.section == 3) {
         cell.textLabel.text = @"Share Diagnostic File";
         cell.detailTextLabel.text = @"Create a privacy-safe classification summary.";
         cell.imageView.image = [UIImage systemImageNamed:@"doc.text.magnifyingglass"];
         cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         cell.selectionStyle = UITableViewCellSelectionStyleDefault;
+    } else if (indexPath.row == 0) {
+        NSDictionary *info = NSBundle.mainBundle.infoDictionary; cell.textLabel.text = @"AAZ Tweak Manager"; cell.detailTextLabel.text = [NSString stringWithFormat:@"Version %@ — Build %@", info[@"CFBundleShortVersionString"] ?: @"Unknown", info[@"CFBundleVersion"] ?: @"Unknown"]; cell.imageView.image = [UIImage systemImageNamed:@"info.circle"];
+    } else {
+        cell.textLabel.text = @"Developer on X"; cell.detailTextLabel.text = @"@_kkk2"; cell.imageView.image = [UIImage systemImageNamed:@"link"]; cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator; cell.selectionStyle = UITableViewCellSelectionStyleDefault;
     }
     return cell;
 }
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
-    if (indexPath.section == 1) { [self manageProfiles]; return; }
+    if (indexPath.section == 1) { [self.navigationController pushViewController:[ATMProfilesController new] animated:YES]; return; }
+    if (indexPath.section == 4 && indexPath.row == 1) { NSURL *url = [NSURL URLWithString:@"https://x.com/_kkk2"]; if (url) [UIApplication.sharedApplication openURL:url options:@{} completionHandler:nil]; return; }
     if (indexPath.section != 3) return;
     NSError *error = nil;
     ATMAppModel *model = ATMAppModel.shared;
@@ -527,13 +620,6 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
     activity.popoverPresentationController.sourceView = self.view;
     activity.popoverPresentationController.sourceRect = self.view.bounds;
     [self presentViewController:activity animated:YES completion:nil];
-}
-- (void)manageProfiles {
-    NSArray *profiles = ATMAppModel.shared.backupManager.savedProfiles;
-    if (!profiles.count) { ATMShowError(self, @"No Saved Profiles", [NSError errorWithDomain:@"ATM" code:5 userInfo:@{NSLocalizedDescriptionKey: @"Save a selection profile from the Select menu in My Tweaks."}]); return; }
-    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"Delete a Profile" message:@"Deleting a profile does not change the current selection or any backup." preferredStyle:UIAlertControllerStyleActionSheet];
-    for (NSDictionary *profile in profiles) { NSString *name = profile[@"name"] ?: @"Profile"; [sheet addAction:[UIAlertAction actionWithTitle:name style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *action) { [ATMAppModel.shared.backupManager deleteProfileNamed:name error:nil]; [self.tableView reloadData]; }]]; }
-    [sheet addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]]; sheet.popoverPresentationController.sourceView = self.view; sheet.popoverPresentationController.sourceRect = self.view.bounds; [self presentViewController:sheet animated:YES completion:nil];
 }
 - (void)showExcludedChanged:(UISwitch *)sender { [NSUserDefaults.standardUserDefaults setBool:sender.isOn forKey:ATMShowExcludedKey]; [NSNotificationCenter.defaultCenter postNotificationName:ATMDataChangedNotification object:nil]; }
 @end
