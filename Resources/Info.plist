@@ -17,7 +17,7 @@
     <key>CFBundleShortVersionString</key>
     <string>0.1.0</string>
     <key>CFBundleVersion</key>
-    <string>8</string>
+    <string>9</string>
     <key>CFBundleDocumentTypes</key>
     <array>
         <dict>
@@ -29,6 +29,10 @@
             </array>
             <key>CFBundleTypeRole</key>
             <string>Viewer</string>
+            <key>CFBundleTypeExtensions</key>
+            <array><string>aaztmbackup</string></array>
+            <key>LSHandlerRank</key>
+            <string>Owner</string>
         </dict>
     </array>
     <key>UTExportedTypeDeclarations</key>
@@ -39,7 +43,10 @@
             <key>UTTypeDescription</key>
             <string>AAZ Tweak Manager Backup</string>
             <key>UTTypeConformsTo</key>
-            <array><string>public.data</string></array>
+            <array>
+                <string>public.archive</string>
+                <string>public.data</string>
+            </array>
             <key>UTTypeTagSpecification</key>
             <dict>
                 <key>public.filename-extension</key>

@@ -18,7 +18,7 @@ AAZ Tweak Manager is a rootless jailbreak app for reviewing and backing up packa
 - Presents a local activity timeline with readable package/backup events, date sections, filters, and safe history clearing.
 - Writes backups atomically through a private partial file, validates archive structure and CRC values, then exposes the final file only after success.
 - Inspects backup health, verifies cached-DEB SHA-256 hashes, and reports migration readiness using counts rather than public package identities.
-- Lets Files select any document, then accepts it only after protected local staging and backup-integrity validation. Import status stays privacy-safe and duplicate archives are rejected.
+- Imports backups from Files or the iOS share sheet, then accepts them only after protected local staging and integrity validation. Duplicate archives are rejected.
 - Compares standard backups using Added, Removed, Updated, and Unchanged counts.
 - Supports reusable local selection profiles with a dedicated Load/Rename/Duplicate/Delete manager, plus backup search, size-aware sorting, and pinning.
 - Shows the installed Version and Build in Settings and keeps the empty History presentation centered and easy to read.

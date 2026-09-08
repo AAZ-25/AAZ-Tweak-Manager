@@ -1,5 +1,4 @@
 #import "ATMViewControllers.h"
-#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import "ATMCore.h"
 #import "ATMBackupManager.h"
 
@@ -332,6 +331,7 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
 @property(nonatomic, strong) UISearchController *backupSearchController;
 @property(nonatomic, assign) NSInteger sortMode;
 @property(nonatomic, strong, nullable) NSURL *pendingImportURL;
+- (void)beginImportFromURL:(NSURL *)url;
 @end
 
 @implementation ATMBackupsController
@@ -385,11 +385,12 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
 }
 - (void)compareBackup:(NSURL *)older with:(NSURL *)newer { NSError *error = nil; NSDictionary *result = [ATMAppModel.shared.backupManager compareBackup:older withBackup:newer error:&error]; if (!result) { ATMShowError(self, @"Comparison unavailable", error); return; } NSString *message = [NSString stringWithFormat:@"Added: %@\nRemoved: %@\nUpdated: %@\nUnchanged: %@", result[@"added"], result[@"removed"], result[@"updated"], result[@"unchanged"]]; UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Backup Changes" message:message preferredStyle:UIAlertControllerStyleAlert]; [alert addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleCancel handler:nil]]; [self presentViewController:alert animated:YES completion:nil]; }
 - (void)importBackup {
-    UTType *itemType = [UTType typeWithIdentifier:@"public.item"];
-    if (!itemType) { ATMShowError(self, @"Import unavailable", [NSError errorWithDomain:@"ATM" code:6 userInfo:@{NSLocalizedDescriptionKey: @"Files is unavailable."}]); return; }
     [NSUserDefaults.standardUserDefaults setObject:@"picker-opened" forKey:@"ATMLastImportStageV1"];
     [NSUserDefaults.standardUserDefaults setInteger:0 forKey:@"ATMLastImportErrorCodeV1"];
-    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[itemType] asCopy:YES];
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initWithDocumentTypes:@[@"com.aaz.tweakmanager.backup", @"public.archive", @"public.data", @"public.item"] inMode:UIDocumentPickerModeImport];
+#pragma clang diagnostic pop
     picker.delegate = self;
     picker.allowsMultipleSelection = NO;
     [self presentViewController:picker animated:YES completion:nil];
@@ -399,6 +400,9 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
     NSURL *url = urls.firstObject;
     if (!url) { [NSUserDefaults.standardUserDefaults setObject:@"no-selection" forKey:@"ATMLastImportStageV1"]; [NSUserDefaults.standardUserDefaults setInteger:51 forKey:@"ATMLastImportErrorCodeV1"]; return; }
     [NSUserDefaults.standardUserDefaults setObject:@"file-selected" forKey:@"ATMLastImportStageV1"];
+    [self beginImportFromURL:url];
+}
+- (void)beginImportFromURL:(NSURL *)url {
     UIAlertController *progress = [UIAlertController alertControllerWithTitle:@"Importing Backup" message:@"Preparing the selected file…" preferredStyle:UIAlertControllerStyleAlert];
     [self presentViewController:progress animated:YES completion:nil];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
@@ -648,4 +652,20 @@ UIViewController *ATMCreateRootController(void) {
     UIViewController *settings = [ATMSettingsController new]; settings.tabBarItem.title = @"Settings";
     tabs.viewControllers = @[ATMNavigation(tweaks, @"shippingbox.fill"), ATMNavigation(backups, @"externaldrive.fill"), ATMNavigation(sources, @"link"), ATMNavigation(history, @"clock.arrow.circlepath"), ATMNavigation(settings, @"gearshape.fill")];
     return tabs;
+}
+
+BOOL ATMHandleBackupURL(UIViewController *rootController, NSURL *url) {
+    if (!url.isFileURL || ![rootController isKindOfClass:UITabBarController.class]) return NO;
+    UITabBarController *tabs = (UITabBarController *)rootController;
+    if (tabs.viewControllers.count < 2 || ![tabs.viewControllers[1] isKindOfClass:UINavigationController.class]) return NO;
+    UINavigationController *navigation = (UINavigationController *)tabs.viewControllers[1];
+    if (![navigation.viewControllers.firstObject isKindOfClass:ATMBackupsController.class]) return NO;
+    ATMBackupsController *backups = (ATMBackupsController *)navigation.viewControllers.firstObject;
+    tabs.selectedIndex = 1;
+    [navigation popToRootViewControllerAnimated:NO];
+    [backups loadViewIfNeeded];
+    [NSUserDefaults.standardUserDefaults setObject:@"open-in-received" forKey:@"ATMLastImportStageV1"];
+    [NSUserDefaults.standardUserDefaults setInteger:0 forKey:@"ATMLastImportErrorCodeV1"];
+    dispatch_async(dispatch_get_main_queue(), ^{ [backups beginImportFromURL:url]; });
+    return YES;
 }

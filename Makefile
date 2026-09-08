@@ -16,7 +16,7 @@ AAZTweakManager_FILES = \
 AAZTweakManager_CFLAGS = -fobjc-arc -Wall -Wextra \
 	-I$(THEOS_PROJECT_DIR)/App \
 	-I$(THEOS_PROJECT_DIR)/Core
-AAZTweakManager_FRAMEWORKS = UIKit Foundation Security UniformTypeIdentifiers
+AAZTweakManager_FRAMEWORKS = UIKit Foundation Security
 AAZTweakManager_LIBRARIES = z
 AAZTweakManager_CODESIGN_FLAGS = -SResources/AAZTweakManager.entitlements
 AAZTweakManager_RESOURCE_FILES = \
