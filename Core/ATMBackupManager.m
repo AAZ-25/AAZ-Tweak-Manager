@@ -23,6 +23,40 @@ static const NSUInteger ATMEncryptedTagLength = CC_SHA256_DIGEST_LENGTH;
 
 static NSError *ATMBackupError(NSInteger code, NSString *message) { return [NSError errorWithDomain:ATMBackupErrorDomain code:code userInfo:@{NSLocalizedDescriptionKey: message}]; }
 
+static BOOL ATMCopyFileContents(NSURL *sourceURL, NSURL *destinationURL, NSInteger *failureCode) {
+    NSInputStream *input = [NSInputStream inputStreamWithURL:sourceURL];
+    NSOutputStream *output = [NSOutputStream outputStreamToFileAtPath:destinationURL.path append:NO];
+    if (!input || !output) { if (failureCode) *failureCode = !input ? 59 : 60; return NO; }
+    [input open];
+    [output open];
+    if (input.streamStatus == NSStreamStatusError || input.streamStatus == NSStreamStatusClosed) {
+        if (failureCode) *failureCode = 59;
+        [input close]; [output close];
+        return NO;
+    }
+    if (output.streamStatus == NSStreamStatusError || output.streamStatus == NSStreamStatusClosed) {
+        if (failureCode) *failureCode = 60;
+        [input close]; [output close];
+        return NO;
+    }
+    uint8_t buffer[64 * 1024];
+    BOOL success = YES;
+    while (success) {
+        NSInteger readCount = [input read:buffer maxLength:sizeof(buffer)];
+        if (readCount == 0) break;
+        if (readCount < 0) { if (failureCode) *failureCode = 59; success = NO; break; }
+        NSInteger written = 0;
+        while (written < readCount) {
+            NSInteger writeCount = [output write:buffer + written maxLength:(NSUInteger)(readCount - written)];
+            if (writeCount <= 0) { if (failureCode) *failureCode = 60; success = NO; break; }
+            written += writeCount;
+        }
+    }
+    [input close];
+    [output close];
+    return success;
+}
+
 static NSString *ATMRunDPKGDebField(ATMEnvironment *environment, NSURL *debURL) {
     NSArray *candidates = @[[environment pathInsideRoot:@"/usr/bin/dpkg-deb"], [environment pathInsideRoot:@"/bin/dpkg-deb"]]; NSString *tool = nil;
     for (NSString *candidate in candidates) if ([NSFileManager.defaultManager isExecutableFileAtPath:candidate]) { tool = candidate; break; }
@@ -105,15 +139,34 @@ static NSData *ATMDecryptArchive(NSData *container, NSString *password, NSError 
         [NSUserDefaults.standardUserDefaults setObject:@"invalid-selection" forKey:ATMLastImportStageKey]; [NSUserDefaults.standardUserDefaults setInteger:56 forKey:ATMLastImportErrorCodeKey];
         return nil;
     }
-    NSURL *staged = [self.backupDirectory URLByAppendingPathComponent:[NSString stringWithFormat:@".%@.import.staged", NSUUID.UUID.UUIDString]];
+    NSError *directoryError = nil;
+    NSURL *backupDirectory = [NSURL fileURLWithPath:@"/var/mobile/Documents/AAZTweakManager/Backups" isDirectory:YES];
+    if (![NSFileManager.defaultManager createDirectoryAtURL:backupDirectory withIntermediateDirectories:YES attributes:@{NSFileProtectionKey: NSFileProtectionCompleteUntilFirstUserAuthentication} error:&directoryError]) {
+        if (error) *error = ATMBackupError(57, @"The backup storage folder is unavailable.");
+        [NSUserDefaults.standardUserDefaults setObject:@"destination-unavailable" forKey:ATMLastImportStageKey]; [NSUserDefaults.standardUserDefaults setInteger:57 forKey:ATMLastImportErrorCodeKey];
+        return nil;
+    }
+    NSURL *staged = [backupDirectory URLByAppendingPathComponent:[NSString stringWithFormat:@".%@.import.staged", NSUUID.UUID.UUIDString]];
     BOOL accessed = [sourceURL startAccessingSecurityScopedResource];
-    BOOL readable = [NSFileManager.defaultManager isReadableFileAtPath:sourceURL.path];
-    BOOL copied = readable && [NSFileManager.defaultManager copyItemAtURL:sourceURL toURL:staged error:error];
+    [NSUserDefaults.standardUserDefaults setObject:@"copy-coordinating" forKey:ATMLastImportStageKey];
+    __block BOOL copied = NO;
+    __block NSInteger copyFailureCode = 59;
+    __block BOOL accessorCalled = NO;
+    NSError *coordinationError = nil;
+    NSFileCoordinator *coordinator = [[NSFileCoordinator alloc] initWithFilePresenter:nil];
+    [coordinator coordinateReadingItemAtURL:sourceURL options:NSFileCoordinatorReadingWithoutChanges error:&coordinationError byAccessor:^(NSURL *coordinatedURL) {
+        accessorCalled = YES;
+        [NSUserDefaults.standardUserDefaults setObject:@"copying" forKey:ATMLastImportStageKey];
+        copied = ATMCopyFileContents(coordinatedURL, staged, &copyFailureCode);
+    }];
     if (accessed) [sourceURL stopAccessingSecurityScopedResource];
     if (!copied) {
         [NSFileManager.defaultManager removeItemAtURL:staged error:nil];
-        if (error) *error = ATMBackupError(52, @"The selected file could not be copied from Files. Try saving it On My iPhone, then select it again.");
-        [NSUserDefaults.standardUserDefaults setObject:@"copy-failed" forKey:ATMLastImportStageKey]; [NSUserDefaults.standardUserDefaults setInteger:52 forKey:ATMLastImportErrorCodeKey];
+        NSInteger code = accessorCalled ? copyFailureCode : 61;
+        NSString *stage = code == 60 ? @"destination-write-failed" : (code == 61 ? @"coordination-failed" : @"source-read-failed");
+        NSString *message = code == 60 ? @"The selected backup could not be saved to local storage." : @"The selected backup could not be read from Files. Make sure it is fully downloaded, then try again.";
+        if (error) *error = ATMBackupError(code, message);
+        [NSUserDefaults.standardUserDefaults setObject:stage forKey:ATMLastImportStageKey]; [NSUserDefaults.standardUserDefaults setInteger:code forKey:ATMLastImportErrorCodeKey];
         return nil;
     }
     NSNumber *size = nil;

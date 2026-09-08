@@ -19,14 +19,14 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "9"
+assert info["CFBundleVersion"] == "10"
 assert info["LSSupportsOpeningDocumentsInPlace"] is True
 assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["AppIcon60x60"]
 
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta9" in control
+assert "Version: 0.1.0~beta10" in control
 assert "Priority: optional" in control
 
 excluded_directories = {".git", ".theos-build", "packages"}
@@ -94,8 +94,13 @@ assert "importStage=%@" in all_text
 assert "importErrorCode=%ld" in all_text
 assert "Search backups" in all_text
 assert "Pin" in all_text and "Unpin" in all_text
-assert "UIDocumentPickerModeImport" in all_text
-assert '@"public.archive"' in all_text
+assert "initForOpeningContentTypes:@[itemType] asCopy:YES" in all_text
+assert '[UTType typeWithIdentifier:@"public.item"]' in all_text
+assert "NSFileCoordinator" in all_text
+assert "isReadableFileAtPath:sourceURL.path" not in all_text
+assert "ATMCopyFileContents" in all_text
+assert "BOOL accessStarted = [url startAccessingSecurityScopedResource]" in all_text
+assert "if (accessStarted) [url stopAccessingSecurityScopedResource]" in all_text
 assert "ATMHandleBackupURL" in all_text
 assert "open-in-received" in all_text
 assert '"picker-opened"' in all_text
@@ -103,7 +108,7 @@ assert '"file-selected"' in all_text
 assert '"picker-cancelled"' in all_text
 assert "UTType.data" not in all_text
 assert "for (NSUInteger index = 0; index < titles.count; index++)" in all_text
-assert "AAZTweakManager_FRAMEWORKS = UIKit Foundation Security" in (ROOT / "Makefile").read_text()
+assert "AAZTweakManager_FRAMEWORKS = UIKit Foundation Security UniformTypeIdentifiers" in (ROOT / "Makefile").read_text()
 assert "Restore preview" in all_text or "Restore Preview" in all_text
 assert "The developer link opens externally" not in all_text
 assert '@"architecture": @"iphoneos-arm64"' in all_text

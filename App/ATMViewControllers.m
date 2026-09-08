@@ -1,4 +1,5 @@
 #import "ATMViewControllers.h"
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import "ATMCore.h"
 #import "ATMBackupManager.h"
 
@@ -385,15 +386,16 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
 }
 - (void)compareBackup:(NSURL *)older with:(NSURL *)newer { NSError *error = nil; NSDictionary *result = [ATMAppModel.shared.backupManager compareBackup:older withBackup:newer error:&error]; if (!result) { ATMShowError(self, @"Comparison unavailable", error); return; } NSString *message = [NSString stringWithFormat:@"Added: %@\nRemoved: %@\nUpdated: %@\nUnchanged: %@", result[@"added"], result[@"removed"], result[@"updated"], result[@"unchanged"]]; UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Backup Changes" message:message preferredStyle:UIAlertControllerStyleAlert]; [alert addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleCancel handler:nil]]; [self presentViewController:alert animated:YES completion:nil]; }
 - (void)importBackup {
-    [NSUserDefaults.standardUserDefaults setObject:@"picker-opened" forKey:@"ATMLastImportStageV1"];
+    [NSUserDefaults.standardUserDefaults setObject:@"picker-requested" forKey:@"ATMLastImportStageV1"];
     [NSUserDefaults.standardUserDefaults setInteger:0 forKey:@"ATMLastImportErrorCodeV1"];
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initWithDocumentTypes:@[@"com.aaz.tweakmanager.backup", @"public.archive", @"public.data", @"public.item"] inMode:UIDocumentPickerModeImport];
-#pragma clang diagnostic pop
+    UTType *itemType = [UTType typeWithIdentifier:@"public.item"];
+    if (!itemType) { ATMShowError(self, @"Import unavailable", [NSError errorWithDomain:@"ATM" code:6 userInfo:@{NSLocalizedDescriptionKey: @"Files is unavailable."}]); return; }
+    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[itemType] asCopy:YES];
     picker.delegate = self;
     picker.allowsMultipleSelection = NO;
-    [self presentViewController:picker animated:YES completion:nil];
+    [self presentViewController:picker animated:YES completion:^{
+        [NSUserDefaults.standardUserDefaults setObject:@"picker-opened" forKey:@"ATMLastImportStageV1"];
+    }];
 }
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
     (void)controller;
@@ -403,11 +405,13 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
     [self beginImportFromURL:url];
 }
 - (void)beginImportFromURL:(NSURL *)url {
+    BOOL accessStarted = [url startAccessingSecurityScopedResource];
     UIAlertController *progress = [UIAlertController alertControllerWithTitle:@"Importing Backup" message:@"Preparing the selected file…" preferredStyle:UIAlertControllerStyleAlert];
     [self presentViewController:progress animated:YES completion:nil];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         NSError *error = nil;
         NSURL *staged = [ATMAppModel.shared.backupManager stageImportFromURL:url error:&error];
+        if (accessStarted) [url stopAccessingSecurityScopedResource];
         dispatch_async(dispatch_get_main_queue(), ^{
             [progress dismissViewControllerAnimated:YES completion:^{
                 if (!staged) { ATMShowError(self, @"Import could not start", error); return; }
@@ -666,6 +670,6 @@ BOOL ATMHandleBackupURL(UIViewController *rootController, NSURL *url) {
     [backups loadViewIfNeeded];
     [NSUserDefaults.standardUserDefaults setObject:@"open-in-received" forKey:@"ATMLastImportStageV1"];
     [NSUserDefaults.standardUserDefaults setInteger:0 forKey:@"ATMLastImportErrorCodeV1"];
-    dispatch_async(dispatch_get_main_queue(), ^{ [backups beginImportFromURL:url]; });
+    [backups beginImportFromURL:url];
     return YES;
 }

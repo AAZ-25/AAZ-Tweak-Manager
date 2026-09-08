@@ -10,7 +10,7 @@
     self.window.rootViewController = ATMCreateRootController();
     [self.window makeKeyAndVisible];
     NSURL *incomingURL = launchOptions[UIApplicationLaunchOptionsURLKey];
-    if (incomingURL) dispatch_async(dispatch_get_main_queue(), ^{ ATMHandleBackupURL(self.window.rootViewController, incomingURL); });
+    if (incomingURL) ATMHandleBackupURL(self.window.rootViewController, incomingURL);
     return YES;
 }
 
