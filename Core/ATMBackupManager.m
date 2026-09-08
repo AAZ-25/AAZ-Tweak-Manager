@@ -147,19 +147,17 @@ static NSData *ATMDecryptArchive(NSData *container, NSString *password, NSError 
         return nil;
     }
     NSURL *staged = [backupDirectory URLByAppendingPathComponent:[NSString stringWithFormat:@".%@.import.staged", NSUUID.UUID.UUIDString]];
-    BOOL accessed = [sourceURL startAccessingSecurityScopedResource];
     [NSUserDefaults.standardUserDefaults setObject:@"copy-coordinating" forKey:ATMLastImportStageKey];
     __block BOOL copied = NO;
     __block NSInteger copyFailureCode = 59;
     __block BOOL accessorCalled = NO;
     NSError *coordinationError = nil;
     NSFileCoordinator *coordinator = [[NSFileCoordinator alloc] initWithFilePresenter:nil];
-    [coordinator coordinateReadingItemAtURL:sourceURL options:NSFileCoordinatorReadingWithoutChanges error:&coordinationError byAccessor:^(NSURL *coordinatedURL) {
+    [coordinator coordinateReadingItemAtURL:sourceURL options:NSFileCoordinatorReadingForUploading error:&coordinationError byAccessor:^(NSURL *coordinatedURL) {
         accessorCalled = YES;
         [NSUserDefaults.standardUserDefaults setObject:@"copying" forKey:ATMLastImportStageKey];
         copied = ATMCopyFileContents(coordinatedURL, staged, &copyFailureCode);
     }];
-    if (accessed) [sourceURL stopAccessingSecurityScopedResource];
     if (!copied) {
         [NSFileManager.defaultManager removeItemAtURL:staged error:nil];
         NSInteger code = accessorCalled ? copyFailureCode : 61;
