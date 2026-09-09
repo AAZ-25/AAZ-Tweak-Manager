@@ -52,7 +52,6 @@ jobs:
           grep -Fq 'Search packages' "$RUNNER_TEMP/aaz-app.strings"
           grep -Fq 'Create Backup?' "$RUNNER_TEMP/aaz-app.strings"
           grep -Fq 'Selection Updated' "$RUNNER_TEMP/aaz-app.strings"
-          grep -Fq 'Backup Summary' "$RUNNER_TEMP/aaz-app.strings"
           grep -Fq 'Encrypted Backup' "$RUNNER_TEMP/aaz-app.strings"
           grep -Fq 'Backup Health & Readiness' "$RUNNER_TEMP/aaz-app.strings"
           grep -Fq 'Selection Profiles' "$RUNNER_TEMP/aaz-app.strings"

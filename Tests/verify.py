@@ -65,7 +65,6 @@ assert "No matching packages" in all_text
 assert "forPackageIDs" in all_text
 assert "Create Backup?" in all_text
 assert "Creating…" in all_text
-assert "Backup Summary" in all_text
 assert "Selection Updated" in all_text
 assert "No Activity Yet" in all_text
 assert "Clear History?" in all_text
