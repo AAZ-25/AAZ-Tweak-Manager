@@ -145,17 +145,22 @@ static NSData *ATMDecryptArchive(NSData *container, NSString *password, NSError 
         return nil;
     }
     NSURL *staged = [backupDirectory URLByAppendingPathComponent:[NSString stringWithFormat:@".%@.import.staged", NSUUID.UUID.UUIDString]];
-    ATMSetImportDiagnosticState(@"copy-coordinating", 0);
-    __block BOOL copied = NO;
     __block NSInteger copyFailureCode = 59;
+    ATMSetImportDiagnosticState(@"copy-direct-started", 0);
+    __block BOOL copied = ATMCopyFileContents(sourceURL, staged, &copyFailureCode);
     __block BOOL accessorCalled = NO;
     NSError *coordinationError = nil;
-    NSFileCoordinator *coordinator = [[NSFileCoordinator alloc] initWithFilePresenter:nil];
-    [coordinator coordinateReadingItemAtURL:sourceURL options:NSFileCoordinatorReadingForUploading error:&coordinationError byAccessor:^(NSURL *coordinatedURL) {
-        accessorCalled = YES;
-        ATMSetImportDiagnosticState(@"copying", 0);
-        copied = ATMCopyFileContents(coordinatedURL, staged, &copyFailureCode);
-    }];
+    if (!copied) {
+        ATMRecordImportDiagnosticEvent(@"copy-direct-failed");
+        [NSFileManager.defaultManager removeItemAtURL:staged error:nil];
+        ATMSetImportDiagnosticState(@"coordination-fallback-started", 0);
+        NSFileCoordinator *coordinator = [[NSFileCoordinator alloc] initWithFilePresenter:nil];
+        [coordinator coordinateReadingItemAtURL:sourceURL options:0 error:&coordinationError byAccessor:^(NSURL *coordinatedURL) {
+            accessorCalled = YES;
+            ATMSetImportDiagnosticState(@"coordination-accessor-called", 0);
+            copied = ATMCopyFileContents(coordinatedURL, staged, &copyFailureCode);
+        }];
+    }
     if (!copied) {
         [NSFileManager.defaultManager removeItemAtURL:staged error:nil];
         NSInteger code = accessorCalled ? copyFailureCode : 61;

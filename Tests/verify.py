@@ -19,14 +19,14 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "16"
+assert info["CFBundleVersion"] == "17"
 assert info["LSSupportsOpeningDocumentsInPlace"] is True
 assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["AppIcon60x60"]
 
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta16" in control
+assert "Version: 0.1.0~beta17" in control
 assert "Priority: optional" in control
 
 excluded_directories = {".git", ".theos-build", "packages"}
@@ -120,7 +120,12 @@ assert "filenames, paths, providers, passwords, or archive contents" in all_text
 assert "picker-presentation-blocked" in all_text
 assert "Already Imported" in all_text
 assert "NSFileCoordinator" in all_text
-assert "NSFileCoordinatorReadingForUploading" in all_text
+assert "copy-direct-started" in all_text
+assert "copy-direct-failed" in all_text
+assert "coordination-fallback-started" in all_text
+assert "coordination-accessor-called" in all_text
+assert "coordinateReadingItemAtURL:sourceURL options:0" in all_text
+assert "NSFileCoordinatorReadingForUploading" not in (ROOT / "Core/ATMBackupManager.m").read_text()
 assert "NSFileCoordinatorReadingWithoutChanges" not in all_text
 assert "isReadableFileAtPath:sourceURL.path" not in all_text
 assert "ATMCopyFileContents" in all_text
