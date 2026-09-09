@@ -403,10 +403,10 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
         if (type) [types addObject:type];
     }
     if (!types.count) { ATMSetImportDiagnosticState(@"picker-create-failed", 6); ATMShowError(self, @"Import unavailable", [NSError errorWithDomain:@"ATM" code:6 userInfo:@{NSLocalizedDescriptionKey: @"Files is unavailable."}]); return; }
-    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:types asCopy:YES];
-    ATMRecordImportDiagnosticEvent(@"picker-copy-mode-created");
+    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:types];
+    ATMRecordImportDiagnosticEvent(@"picker-open-mode-created");
     picker.delegate = self;
-    picker.allowsMultipleSelection = YES;
+    picker.allowsMultipleSelection = NO;
     picker.presentationController.delegate = self; self.importPicker = picker;
     ATMRecordImportDiagnosticEvent(@"picker-delegate-attached");
     ATMRecordImportDiagnosticEvent(@"picker-explicit-open-required");

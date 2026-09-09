@@ -19,14 +19,20 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "18"
+assert info["CFBundleVersion"] == "19"
 assert info["LSSupportsOpeningDocumentsInPlace"] is True
+
+with (ROOT / "Resources/AAZTweakManager.entitlements").open("rb") as handle:
+    entitlements = plistlib.load(handle)
+assert entitlements["platform-application"] is True
+assert entitlements["application-identifier"] == info["CFBundleIdentifier"]
+assert entitlements["com.apple.private.security.no-container"] is True
 assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["AppIcon60x60"]
 
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta18" in control
+assert "Version: 0.1.0~beta19" in control
 assert "Priority: optional" in control
 
 excluded_directories = {".git", ".theos-build", "packages"}
@@ -93,8 +99,9 @@ assert "importStage=%@" in all_text
 assert "importErrorCode=%ld" in all_text
 assert "Search backups" in all_text
 assert "Pin" in all_text and "Unpin" in all_text
-assert "initForOpeningContentTypes:types asCopy:YES" in all_text
-assert "picker-copy-mode-created" in all_text
+assert "initForOpeningContentTypes:types asCopy:YES" not in all_text
+assert "initForOpeningContentTypes:types]" in all_text
+assert 'ATMRecordImportDiagnosticEvent(@"picker-copy-mode-created")' not in all_text
 assert "ATMDocumentPickerInitFunction" not in all_text
 assert '@[@"com.aaz.tweakmanager.backup", @"public.archive", @"public.data", @"public.item"]' in all_text
 assert "initForOpeningContentTypes:" in all_text
@@ -110,7 +117,7 @@ assert "importTraceFormat=1" in all_text
 assert "importDebugPrivacy=fixed-stage-labels-only" in all_text
 assert "picker-open-mode-created" in all_text
 assert "picker-explicit-open-required" in all_text
-assert "picker.allowsMultipleSelection = YES" in all_text
+assert "picker.allowsMultipleSelection = NO" in all_text
 assert "Select one backup, then tap Open" in all_text
 assert "selection-count-invalid" in all_text
 assert "picker-callback-multiple" in all_text
