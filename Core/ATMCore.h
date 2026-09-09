@@ -53,6 +53,12 @@ typedef NS_ENUM(NSInteger, ATMInstallDateConfidence) {
 - (NSArray<ATMSourceRecord *> *)scanSources:(NSError **)error;
 @end
 
+FOUNDATION_EXPORT BOOL ATMImportDiagnosticsEnabled(void);
+FOUNDATION_EXPORT void ATMSetImportDiagnosticsEnabled(BOOL enabled);
+FOUNDATION_EXPORT void ATMClearImportDiagnosticTrace(void);
+FOUNDATION_EXPORT void ATMRecordImportDiagnosticEvent(NSString *stage);
+FOUNDATION_EXPORT void ATMSetImportDiagnosticState(NSString *stage, NSInteger code);
+
 FOUNDATION_EXPORT NSURL * _Nullable ATMWriteDiagnosticReport(ATMEnvironment *environment,
                                                               NSArray<ATMPackageRecord *> *packages,
                                                               NSSet<NSString *> *selectedPackageIDs,

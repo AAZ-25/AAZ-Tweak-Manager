@@ -311,6 +311,58 @@ static NSURL *ATMApplicationSupportDirectory(void) {
     return directory;
 }
 
+static NSString *const ATMImportDiagnosticsEnabledKey = @"ATMImportDiagnosticsEnabled";
+static NSString *const ATMImportTraceKey = @"ATMImportTraceV1";
+static NSString *const ATMLastImportStageKey = @"ATMLastImportStageV1";
+static NSString *const ATMLastImportErrorCodeKey = @"ATMLastImportErrorCodeV1";
+
+static BOOL ATMImportDiagnosticStageAllowed(NSString *stage) {
+    static NSSet<NSString *> *allowedStages; static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        allowedStages = [NSSet setWithArray:@[
+            @"picker-requested", @"picker-presentation-blocked", @"picker-create-failed",
+            @"picker-legacy-created", @"picker-delegate-attached", @"picker-presentation-started",
+            @"picker-opened", @"picker-callback-multiple", @"picker-callback-single",
+            @"no-selection", @"file-selected", @"picker-cancel-delegate", @"picker-cancel-dismissal",
+            @"open-in-received", @"copying", @"invalid-selection", @"destination-unavailable",
+            @"copy-coordinating", @"source-read-failed", @"destination-write-failed",
+            @"coordination-failed", @"empty-file", @"staged", @"validating", @"duplicate",
+            @"validation-failed", @"finalize-failed", @"completed"
+        ]];
+    });
+    return [stage isKindOfClass:NSString.class] && [allowedStages containsObject:stage];
+}
+
+BOOL ATMImportDiagnosticsEnabled(void) {
+    return [NSUserDefaults.standardUserDefaults boolForKey:ATMImportDiagnosticsEnabledKey];
+}
+
+void ATMClearImportDiagnosticTrace(void) {
+    [NSUserDefaults.standardUserDefaults removeObjectForKey:ATMImportTraceKey];
+}
+
+void ATMSetImportDiagnosticsEnabled(BOOL enabled) {
+    [NSUserDefaults.standardUserDefaults setBool:enabled forKey:ATMImportDiagnosticsEnabledKey];
+    ATMClearImportDiagnosticTrace();
+}
+
+void ATMRecordImportDiagnosticEvent(NSString *stage) {
+    if (!ATMImportDiagnosticsEnabled() || !ATMImportDiagnosticStageAllowed(stage)) return;
+    NSArray *existing = [NSUserDefaults.standardUserDefaults arrayForKey:ATMImportTraceKey] ?: @[];
+    NSMutableArray<NSString *> *trace = [NSMutableArray array];
+    for (id item in existing) if ([item isKindOfClass:NSString.class] && ATMImportDiagnosticStageAllowed(item)) [trace addObject:item];
+    [trace addObject:stage];
+    while (trace.count > 32) [trace removeObjectAtIndex:0];
+    [NSUserDefaults.standardUserDefaults setObject:trace forKey:ATMImportTraceKey];
+}
+
+void ATMSetImportDiagnosticState(NSString *stage, NSInteger code) {
+    if (!ATMImportDiagnosticStageAllowed(stage)) return;
+    [NSUserDefaults.standardUserDefaults setObject:stage forKey:ATMLastImportStageKey];
+    [NSUserDefaults.standardUserDefaults setInteger:code forKey:ATMLastImportErrorCodeKey];
+    ATMRecordImportDiagnosticEvent(stage);
+}
+
 NSURL *ATMWriteDiagnosticReport(ATMEnvironment *environment,
                                 NSArray<ATMPackageRecord *> *packages,
                                 NSSet<NSString *> *selectedPackageIDs,
@@ -335,7 +387,7 @@ NSURL *ATMWriteDiagnosticReport(ATMEnvironment *environment,
     else if ([environment.dpkgStatusPath hasSuffix:@"/var/lib/dpkg/status"]) databaseKind = @"var-lib-dpkg";
     NSFileManager *fm = NSFileManager.defaultManager;
     NSDictionary *info = NSBundle.mainBundle.infoDictionary;
-    NSArray *lines = @[
+    NSMutableArray<NSString *> *lines = [@[
         @"AAZ Tweak Manager Diagnostic",
         @"format=1",
         [NSString stringWithFormat:@"appVersion=%@", info[@"CFBundleShortVersionString"] ?: @"unknown"],
@@ -356,7 +408,20 @@ NSURL *ATMWriteDiagnosticReport(ATMEnvironment *environment,
         [NSString stringWithFormat:@"importStage=%@", [NSUserDefaults.standardUserDefaults stringForKey:@"ATMLastImportStageV1"] ?: @"not-run"],
         [NSString stringWithFormat:@"importErrorCode=%ld", (long)[NSUserDefaults.standardUserDefaults integerForKey:@"ATMLastImportErrorCodeV1"]],
         @"privacy=counts-and-stage-flags-only"
-    ];
+    ] mutableCopy];
+    BOOL importDebugEnabled = ATMImportDiagnosticsEnabled();
+    [lines addObject:[NSString stringWithFormat:@"importDebugEnabled=%@", importDebugEnabled ? @"yes" : @"no"]];
+    if (importDebugEnabled) {
+        NSArray *storedTrace = [NSUserDefaults.standardUserDefaults arrayForKey:ATMImportTraceKey] ?: @[];
+        NSMutableArray<NSString *> *safeTrace = [NSMutableArray array];
+        for (id item in storedTrace) if ([item isKindOfClass:NSString.class] && ATMImportDiagnosticStageAllowed(item)) [safeTrace addObject:item];
+        [lines addObject:@"importTraceFormat=1"];
+        [lines addObject:[NSString stringWithFormat:@"importTraceCount=%lu", (unsigned long)safeTrace.count]];
+        [lines addObject:[NSString stringWithFormat:@"importTrace=%@", safeTrace.count ? [safeTrace componentsJoinedByString:@" > "] : @"empty"]];
+        [lines addObject:@"importDebugPrivacy=fixed-stage-labels-only"];
+    } else {
+        [lines addObject:@"importTrace=disabled"];
+    }
     NSString *contents = [[lines componentsJoinedByString:@"\n"] stringByAppendingString:@"\n"];
     NSURL *url = [ATMApplicationSupportDirectory() URLByAppendingPathComponent:@"AAZ-Tweak-Manager-Diagnostic.txt"];
     BOOL written = [contents writeToURL:url atomically:YES encoding:NSUTF8StringEncoding error:error];

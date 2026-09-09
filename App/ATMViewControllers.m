@@ -389,32 +389,42 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
 }
 - (void)compareBackup:(NSURL *)older with:(NSURL *)newer { NSError *error = nil; NSDictionary *result = [ATMAppModel.shared.backupManager compareBackup:older withBackup:newer error:&error]; if (!result) { ATMShowError(self, @"Comparison unavailable", error); return; } NSString *message = [NSString stringWithFormat:@"Added: %@\nRemoved: %@\nUpdated: %@\nUnchanged: %@", result[@"added"], result[@"removed"], result[@"updated"], result[@"unchanged"]]; UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Backup Changes" message:message preferredStyle:UIAlertControllerStyleAlert]; [alert addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleCancel handler:nil]]; [self presentViewController:alert animated:YES completion:nil]; }
 - (void)importBackup {
-    [NSUserDefaults.standardUserDefaults setObject:@"picker-requested" forKey:@"ATMLastImportStageV1"];
-    [NSUserDefaults.standardUserDefaults setInteger:0 forKey:@"ATMLastImportErrorCodeV1"];
+    ATMClearImportDiagnosticTrace();
+    ATMSetImportDiagnosticState(@"picker-requested", 0);
     UIViewController *presenter = self.navigationController ?: self;
     if (!self.view.window || presenter.presentedViewController) {
-        [NSUserDefaults.standardUserDefaults setObject:@"picker-presentation-blocked" forKey:@"ATMLastImportStageV1"];
-        [NSUserDefaults.standardUserDefaults setInteger:62 forKey:@"ATMLastImportErrorCodeV1"];
+        ATMSetImportDiagnosticState(@"picker-presentation-blocked", 62);
         ATMShowError(self, @"Import unavailable", [NSError errorWithDomain:@"ATM" code:62 userInfo:@{NSLocalizedDescriptionKey: @"Close the current window, then try Import Backup again."}]);
         return;
     }
     SEL legacyImportSelector = NSSelectorFromString(@"initWithDocumentTypes:inMode:");
     typedef UIDocumentPickerViewController *(*ATMDocumentPickerInitFunction)(id, SEL, NSArray<NSString *> *, NSUInteger);
-    UIDocumentPickerViewController *picker = ((ATMDocumentPickerInitFunction)objc_msgSend)([UIDocumentPickerViewController alloc], legacyImportSelector, @[@"public.data"], 0);
-    if (!picker) { ATMShowError(self, @"Import unavailable", [NSError errorWithDomain:@"ATM" code:6 userInfo:@{NSLocalizedDescriptionKey: @"Files is unavailable."}]); return; }
+    NSArray<NSString *> *documentTypes = @[@"com.aaz.tweakmanager.backup", @"public.archive", @"public.data", @"public.item"];
+    UIDocumentPickerViewController *picker = ((ATMDocumentPickerInitFunction)objc_msgSend)([UIDocumentPickerViewController alloc], legacyImportSelector, documentTypes, 0);
+    if (!picker) { ATMSetImportDiagnosticState(@"picker-create-failed", 6); ATMShowError(self, @"Import unavailable", [NSError errorWithDomain:@"ATM" code:6 userInfo:@{NSLocalizedDescriptionKey: @"Files is unavailable."}]); return; }
+    ATMRecordImportDiagnosticEvent(@"picker-legacy-created");
     picker.delegate = self;
     picker.allowsMultipleSelection = NO;
     picker.presentationController.delegate = self; self.importPicker = picker;
+    ATMRecordImportDiagnosticEvent(@"picker-delegate-attached");
+    ATMRecordImportDiagnosticEvent(@"picker-presentation-started");
     [presenter presentViewController:picker animated:YES completion:^{
-        [NSUserDefaults.standardUserDefaults setObject:@"picker-opened" forKey:@"ATMLastImportStageV1"];
+        ATMSetImportDiagnosticState(@"picker-opened", 0);
     }];
 }
-- (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
+- (void)handlePickedDocumentURL:(NSURL *)url controller:(UIDocumentPickerViewController *)controller {
     controller.delegate = nil; self.importPicker = nil;
-    NSURL *url = urls.firstObject;
-    if (!url) { [NSUserDefaults.standardUserDefaults setObject:@"no-selection" forKey:@"ATMLastImportStageV1"]; [NSUserDefaults.standardUserDefaults setInteger:51 forKey:@"ATMLastImportErrorCodeV1"]; return; }
-    [NSUserDefaults.standardUserDefaults setObject:@"file-selected" forKey:@"ATMLastImportStageV1"];
+    if (!url) { ATMSetImportDiagnosticState(@"no-selection", 51); return; }
+    ATMSetImportDiagnosticState(@"file-selected", 0);
     [self beginImportFromURL:url];
+}
+- (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
+    ATMRecordImportDiagnosticEvent(@"picker-callback-multiple");
+    [self handlePickedDocumentURL:urls.firstObject controller:controller];
+}
+- (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentAtURL:(NSURL *)url {
+    ATMRecordImportDiagnosticEvent(@"picker-callback-single");
+    [self handlePickedDocumentURL:url controller:controller];
 }
 - (void)beginImportFromURL:(NSURL *)url {
     BOOL accessStarted = [url startAccessingSecurityScopedResource];
@@ -434,8 +444,8 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
         });
     });
 }
-- (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller { controller.delegate = nil; self.importPicker = nil; [NSUserDefaults.standardUserDefaults setObject:@"picker-cancelled" forKey:@"ATMLastImportStageV1"]; [NSUserDefaults.standardUserDefaults setInteger:0 forKey:@"ATMLastImportErrorCodeV1"]; }
-- (void)presentationControllerDidDismiss:(UIPresentationController *)presentationController { if (presentationController.presentedViewController == self.importPicker) { self.importPicker.delegate = nil; self.importPicker = nil; [NSUserDefaults.standardUserDefaults setObject:@"picker-cancelled" forKey:@"ATMLastImportStageV1"]; [NSUserDefaults.standardUserDefaults setInteger:0 forKey:@"ATMLastImportErrorCodeV1"]; } }
+- (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller { controller.delegate = nil; self.importPicker = nil; ATMSetImportDiagnosticState(@"picker-cancel-delegate", 0); }
+- (void)presentationControllerDidDismiss:(UIPresentationController *)presentationController { if (presentationController.presentedViewController == self.importPicker) { self.importPicker.delegate = nil; self.importPicker = nil; ATMSetImportDiagnosticState(@"picker-cancel-dismissal", 0); } }
 - (void)promptForImportPasswordForURL:(NSURL *)url {
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Import Encrypted Backup" message:@"The password is used only for this import and is never stored." preferredStyle:UIAlertControllerStyleAlert];
     [alert addTextFieldWithConfigurationHandler:^(UITextField *field) { field.placeholder = @"Password"; field.secureTextEntry = YES; }];
@@ -602,11 +612,11 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
 - (void)viewDidLoad { [super viewDidLoad]; self.title = @"Settings"; }
 - (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self.tableView reloadData]; }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { (void)tableView; return 5; }
-- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { (void)tableView; if (section == 2) return 3; if (section == 4) return 2; return 1; }
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { (void)tableView; if (section == 2) return 3; if (section == 3 || section == 4) return 2; return 1; }
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section { (void)tableView; return @[@"Inventory", @"Profiles", @"Safety", @"Diagnostics", @"About"][section]; }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView;
-    if (section == 3) return @"Counts and stage flags only.";
+    if (section == 3) return @"Detailed import diagnostics are optional and off by default. They record fixed stage labels only—never filenames, paths, providers, passwords, or archive contents.";
     return nil;
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
@@ -622,9 +632,13 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
         NSArray *titles = @[@"Rootless", @"Credentials Excluded", @"Restore Preview"];
         NSArray *details = @[@"Uses the Rootless package database.", @"Passwords and repository credentials are excluded.", @"Reviews backups without changing packages or sources."];
         cell.textLabel.text = titles[indexPath.row]; cell.detailTextLabel.text = details[indexPath.row]; cell.detailTextLabel.numberOfLines = 2; cell.imageView.image = [UIImage systemImageNamed:@"checkmark.shield"];
+    } else if (indexPath.section == 3 && indexPath.row == 0) {
+        cell.textLabel.text = @"Detailed Import Diagnostics";
+        cell.detailTextLabel.text = ATMImportDiagnosticsEnabled() ? @"On — fixed import stages will be included." : @"Off — enable before reproducing an import problem.";
+        UISwitch *toggle = [UISwitch new]; toggle.on = ATMImportDiagnosticsEnabled(); [toggle addTarget:self action:@selector(importDiagnosticsChanged:) forControlEvents:UIControlEventValueChanged]; cell.accessoryView = toggle;
     } else if (indexPath.section == 3) {
         cell.textLabel.text = @"Share Diagnostic File";
-        cell.detailTextLabel.text = @"Share counts and import status.";
+        cell.detailTextLabel.text = @"Share counts, the final import status, and optional fixed-stage trace.";
         cell.imageView.image = [UIImage systemImageNamed:@"doc.text.magnifyingglass"];
         cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         cell.selectionStyle = UITableViewCellSelectionStyleDefault;
@@ -639,7 +653,7 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
     if (indexPath.section == 1) { [self.navigationController pushViewController:[ATMProfilesController new] animated:YES]; return; }
     if (indexPath.section == 4 && indexPath.row == 1) { NSURL *url = [NSURL URLWithString:@"https://x.com/_kkk2"]; if (url) [UIApplication.sharedApplication openURL:url options:@{} completionHandler:nil]; return; }
-    if (indexPath.section != 3) return;
+    if (indexPath.section != 3 || indexPath.row != 1) return;
     NSError *error = nil;
     ATMAppModel *model = ATMAppModel.shared;
     NSURL *url = ATMWriteDiagnosticReport(model.environment, model.packages, model.ledger.selectedPackageIDs, model.scanError, &error);
@@ -649,6 +663,7 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
     activity.popoverPresentationController.sourceRect = self.view.bounds;
     [self presentViewController:activity animated:YES completion:nil];
 }
+- (void)importDiagnosticsChanged:(UISwitch *)sender { ATMSetImportDiagnosticsEnabled(sender.isOn); [self.tableView reloadSections:[NSIndexSet indexSetWithIndex:3] withRowAnimation:UITableViewRowAnimationNone]; }
 - (void)showExcludedChanged:(UISwitch *)sender { [NSUserDefaults.standardUserDefaults setBool:sender.isOn forKey:ATMShowExcludedKey]; [NSNotificationCenter.defaultCenter postNotificationName:ATMDataChangedNotification object:nil]; }
 @end
 
@@ -681,8 +696,7 @@ BOOL ATMHandleBackupURL(UIViewController *rootController, NSURL *url) {
     tabs.selectedIndex = 1;
     [navigation popToRootViewControllerAnimated:NO];
     [backups loadViewIfNeeded];
-    [NSUserDefaults.standardUserDefaults setObject:@"open-in-received" forKey:@"ATMLastImportStageV1"];
-    [NSUserDefaults.standardUserDefaults setInteger:0 forKey:@"ATMLastImportErrorCodeV1"];
+    ATMSetImportDiagnosticState(@"open-in-received", 0);
     [backups beginImportFromURL:url];
     return YES;
 }

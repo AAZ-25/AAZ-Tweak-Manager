@@ -19,14 +19,14 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "14"
+assert info["CFBundleVersion"] == "15"
 assert info["LSSupportsOpeningDocumentsInPlace"] is False
 assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["AppIcon60x60"]
 
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta14" in control
+assert "Version: 0.1.0~beta15" in control
 assert "Priority: optional" in control
 
 excluded_directories = {".git", ".theos-build", "packages"}
@@ -96,12 +96,22 @@ assert "Search backups" in all_text
 assert "Pin" in all_text and "Unpin" in all_text
 assert 'NSSelectorFromString(@"initWithDocumentTypes:inMode:")' in all_text
 assert "ATMDocumentPickerInitFunction" in all_text
-assert '@[@"public.data"], 0' in all_text
+assert '@[@"com.aaz.tweakmanager.backup", @"public.archive", @"public.data", @"public.item"]' in all_text
 assert "initForOpeningContentTypes:" not in all_text
 assert "Import Backup" in all_text
 assert "numberOfSectionsInTableView" in all_text
 assert "if (indexPath.section == 0) { [self importBackup]; return; }" in all_text
 assert "tableHeaderView = importHeader" not in all_text
+assert "Detailed Import Diagnostics" in all_text
+assert "ATMImportDiagnosticsEnabled" in all_text
+assert "ATMImportDiagnosticStageAllowed" in all_text
+assert "importDebugEnabled=%@" in all_text
+assert "importTraceFormat=1" in all_text
+assert "importDebugPrivacy=fixed-stage-labels-only" in all_text
+assert "picker-callback-multiple" in all_text
+assert "picker-callback-single" in all_text
+assert "didPickDocumentAtURL:(NSURL *)url" in all_text
+assert "filenames, paths, providers, passwords, or archive contents" in all_text
 assert "picker-presentation-blocked" in all_text
 assert "Already Imported" in all_text
 assert "NSFileCoordinator" in all_text
