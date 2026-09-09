@@ -109,7 +109,7 @@ assert "importTraceFormat=1" in all_text
 assert "importDebugPrivacy=fixed-stage-labels-only" in all_text
 assert "picker-open-mode-created" in all_text
 assert "picker-explicit-open-required" in all_text
-assert "UIDocumentPickerModeOpen" in all_text
+assert "legacyImportSelector, documentTypes, 1);" in all_text
 assert "picker.allowsMultipleSelection = YES" in all_text
 assert "Select one backup, then tap Open" in all_text
 assert "selection-count-invalid" in all_text

@@ -400,7 +400,7 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
     SEL legacyImportSelector = NSSelectorFromString(@"initWithDocumentTypes:inMode:");
     typedef UIDocumentPickerViewController *(*ATMDocumentPickerInitFunction)(id, SEL, NSArray<NSString *> *, NSUInteger);
     NSArray<NSString *> *documentTypes = @[@"com.aaz.tweakmanager.backup", @"public.archive", @"public.data", @"public.item"];
-    UIDocumentPickerViewController *picker = ((ATMDocumentPickerInitFunction)objc_msgSend)([UIDocumentPickerViewController alloc], legacyImportSelector, documentTypes, UIDocumentPickerModeOpen);
+    UIDocumentPickerViewController *picker = ((ATMDocumentPickerInitFunction)objc_msgSend)([UIDocumentPickerViewController alloc], legacyImportSelector, documentTypes, 1);
     if (!picker) { ATMSetImportDiagnosticState(@"picker-create-failed", 6); ATMShowError(self, @"Import unavailable", [NSError errorWithDomain:@"ATM" code:6 userInfo:@{NSLocalizedDescriptionKey: @"Files is unavailable."}]); return; }
     ATMRecordImportDiagnosticEvent(@"picker-open-mode-created");
     picker.delegate = self;
