@@ -326,12 +326,13 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
 }
 @end
 
-@interface ATMBackupsController : UITableViewController <UISearchResultsUpdating, UIDocumentPickerDelegate>
+@interface ATMBackupsController : UITableViewController <UISearchResultsUpdating, UIDocumentPickerDelegate, UIAdaptivePresentationControllerDelegate>
 @property(nonatomic, copy) NSArray<NSURL *> *allBackups;
 @property(nonatomic, copy) NSArray<NSURL *> *backups;
 @property(nonatomic, strong) UISearchController *backupSearchController;
 @property(nonatomic, assign) NSInteger sortMode;
 @property(nonatomic, strong, nullable) NSURL *pendingImportURL;
+@property(nonatomic, strong, nullable) UIDocumentPickerViewController *importPicker;
 - (void)beginImportFromURL:(NSURL *)url;
 @end
 
@@ -339,8 +340,16 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
 - (instancetype)init { return [super initWithStyle:UITableViewStyleInsetGrouped]; }
 - (void)viewDidLoad {
     [super viewDidLoad]; self.title = @"Backups";
-    self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"Import" style:UIBarButtonItemStylePlain target:self action:@selector(importBackup)];
     self.backupSearchController = [[UISearchController alloc] initWithSearchResultsController:nil]; self.backupSearchController.searchResultsUpdater = self; self.backupSearchController.obscuresBackgroundDuringPresentation = NO; self.backupSearchController.searchBar.placeholder = @"Search backups"; self.navigationItem.searchController = self.backupSearchController; self.definesPresentationContext = YES;
+    CGFloat importWidth = MAX(CGRectGetWidth(self.tableView.bounds), CGRectGetWidth(UIScreen.mainScreen.bounds));
+    UIView *importHeader = [[UIView alloc] initWithFrame:CGRectMake(0, 0, importWidth, 68)];
+    UIButton *importButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    importButton.frame = CGRectMake(20, 10, importWidth - 40, 48); importButton.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    importButton.backgroundColor = self.view.tintColor; importButton.layer.cornerRadius = 12;
+    [importButton setTitle:@"Import Backup" forState:UIControlStateNormal]; [importButton setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+    importButton.titleLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
+    [importButton addTarget:self action:@selector(importBackup) forControlEvents:UIControlEventTouchUpInside];
+    [importHeader addSubview:importButton]; self.tableView.tableHeaderView = importHeader;
     [self configureSortMenu]; [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(reloadData) name:ATMDataChangedNotification object:nil]; [self reloadData];
 }
 - (void)dealloc { [NSNotificationCenter.defaultCenter removeObserver:self]; }
@@ -388,17 +397,28 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
 - (void)importBackup {
     [NSUserDefaults.standardUserDefaults setObject:@"picker-requested" forKey:@"ATMLastImportStageV1"];
     [NSUserDefaults.standardUserDefaults setInteger:0 forKey:@"ATMLastImportErrorCodeV1"];
-    UTType *itemType = [UTType typeWithIdentifier:@"public.item"];
-    if (!itemType) { ATMShowError(self, @"Import unavailable", [NSError errorWithDomain:@"ATM" code:6 userInfo:@{NSLocalizedDescriptionKey: @"Files is unavailable."}]); return; }
-    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[itemType] asCopy:YES];
+    UIViewController *presenter = self.navigationController ?: self;
+    if (!self.view.window || presenter.presentedViewController) {
+        [NSUserDefaults.standardUserDefaults setObject:@"picker-presentation-blocked" forKey:@"ATMLastImportStageV1"];
+        [NSUserDefaults.standardUserDefaults setInteger:62 forKey:@"ATMLastImportErrorCodeV1"];
+        ATMShowError(self, @"Import unavailable", [NSError errorWithDomain:@"ATM" code:62 userInfo:@{NSLocalizedDescriptionKey: @"Close the current window, then try Import Backup again."}]);
+        return;
+    }
+    NSMutableArray<UTType *> *types = [NSMutableArray array];
+    for (NSString *identifier in @[@"com.aaz.tweakmanager.backup", @"public.archive", @"public.data", @"public.item"]) {
+        UTType *type = [UTType typeWithIdentifier:identifier]; if (type) [types addObject:type];
+    }
+    if (!types.count) { ATMShowError(self, @"Import unavailable", [NSError errorWithDomain:@"ATM" code:6 userInfo:@{NSLocalizedDescriptionKey: @"Files is unavailable."}]); return; }
+    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:types asCopy:YES];
     picker.delegate = self;
     picker.allowsMultipleSelection = NO;
-    [self presentViewController:picker animated:YES completion:^{
+    picker.presentationController.delegate = self; self.importPicker = picker;
+    [presenter presentViewController:picker animated:YES completion:^{
         [NSUserDefaults.standardUserDefaults setObject:@"picker-opened" forKey:@"ATMLastImportStageV1"];
     }];
 }
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
-    (void)controller;
+    controller.delegate = nil; self.importPicker = nil;
     NSURL *url = urls.firstObject;
     if (!url) { [NSUserDefaults.standardUserDefaults setObject:@"no-selection" forKey:@"ATMLastImportStageV1"]; [NSUserDefaults.standardUserDefaults setInteger:51 forKey:@"ATMLastImportErrorCodeV1"]; return; }
     [NSUserDefaults.standardUserDefaults setObject:@"file-selected" forKey:@"ATMLastImportStageV1"];
@@ -422,7 +442,8 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
         });
     });
 }
-- (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller { (void)controller; [NSUserDefaults.standardUserDefaults setObject:@"picker-cancelled" forKey:@"ATMLastImportStageV1"]; [NSUserDefaults.standardUserDefaults setInteger:0 forKey:@"ATMLastImportErrorCodeV1"]; }
+- (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller { controller.delegate = nil; self.importPicker = nil; [NSUserDefaults.standardUserDefaults setObject:@"picker-cancelled" forKey:@"ATMLastImportStageV1"]; [NSUserDefaults.standardUserDefaults setInteger:0 forKey:@"ATMLastImportErrorCodeV1"]; }
+- (void)presentationControllerDidDismiss:(UIPresentationController *)presentationController { if (presentationController.presentedViewController == self.importPicker) { self.importPicker.delegate = nil; self.importPicker = nil; [NSUserDefaults.standardUserDefaults setObject:@"picker-cancelled" forKey:@"ATMLastImportStageV1"]; [NSUserDefaults.standardUserDefaults setInteger:0 forKey:@"ATMLastImportErrorCodeV1"]; } }
 - (void)promptForImportPasswordForURL:(NSURL *)url {
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Import Encrypted Backup" message:@"The password is used only for this import and is never stored." preferredStyle:UIAlertControllerStyleAlert];
     [alert addTextFieldWithConfigurationHandler:^(UITextField *field) { field.placeholder = @"Password"; field.secureTextEntry = YES; }];
@@ -430,7 +451,7 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
     [alert addAction:[UIAlertAction actionWithTitle:@"Continue" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) { [self performImport:url password:alert.textFields.firstObject.text ?: @""]; }]];
     [self presentViewController:alert animated:YES completion:nil];
 }
-- (void)performImport:(NSURL *)url password:(NSString *)password { UIAlertController *progress = [UIAlertController alertControllerWithTitle:@"Inspecting Import" message:@"Checking format, archive integrity, and cached-DEB hashes before adding it." preferredStyle:UIAlertControllerStyleAlert]; [self presentViewController:progress animated:YES completion:nil]; dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ NSError *error = nil; NSURL *imported = [ATMAppModel.shared.backupManager importBackupFromURL:url password:password error:&error]; dispatch_async(dispatch_get_main_queue(), ^{ self.pendingImportURL = nil; [progress dismissViewControllerAnimated:YES completion:^{ if (!imported) { ATMShowError(self, @"Import failed", error); return; } [self reloadData]; UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Backup Imported" message:@"The archive passed health and integrity checks. No restore action was executed." preferredStyle:UIAlertControllerStyleAlert]; [alert addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleCancel handler:nil]]; [self presentViewController:alert animated:YES completion:nil]; }]; }); }); }
+- (void)performImport:(NSURL *)url password:(NSString *)password { UIAlertController *progress = [UIAlertController alertControllerWithTitle:@"Inspecting Import" message:@"Checking format, archive integrity, and cached-DEB hashes before adding it." preferredStyle:UIAlertControllerStyleAlert]; [self presentViewController:progress animated:YES completion:nil]; dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ NSError *error = nil; NSURL *imported = [ATMAppModel.shared.backupManager importBackupFromURL:url password:password error:&error]; dispatch_async(dispatch_get_main_queue(), ^{ self.pendingImportURL = nil; [progress dismissViewControllerAnimated:YES completion:^{ if (!imported) { ATMShowError(self, error.code == 54 ? @"Already Imported" : @"Import failed", error); return; } [self reloadData]; UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Backup Imported" message:@"The archive passed health and integrity checks. No restore action was executed." preferredStyle:UIAlertControllerStyleAlert]; [alert addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleCancel handler:nil]]; [self presentViewController:alert animated:YES completion:nil]; }]; }); }); }
 - (void)shareURL:(NSURL *)url { UIActivityViewController *activity = [[UIActivityViewController alloc] initWithActivityItems:@[url] applicationActivities:nil]; activity.popoverPresentationController.sourceView = self.view; activity.popoverPresentationController.sourceRect = self.view.bounds; [self presentViewController:activity animated:YES completion:nil]; }
 - (UISwipeActionsConfiguration *)tableView:(UITableView *)tableView leadingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath { (void)tableView; if (!self.backups.count) return nil; NSURL *url = self.backups[indexPath.row]; BOOL pinned = [ATMAppModel.shared.backupManager isBackupPinned:url]; UIContextualAction *pin = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleNormal title:pinned ? @"Unpin" : @"Pin" handler:^(__unused UIContextualAction *action, __unused UIView *view, void (^completion)(BOOL)) { [ATMAppModel.shared.backupManager setBackup:url pinned:!pinned]; completion(YES); [self reloadData]; }]; pin.backgroundColor = UIColor.systemBlueColor; return [UISwipeActionsConfiguration configurationWithActions:@[pin]]; }
 - (UISwipeActionsConfiguration *)tableView:(UITableView *)tableView trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath { (void)tableView; if (!self.backups.count) return nil; UIContextualAction *delete = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleDestructive title:@"Delete" handler:^(__unused UIContextualAction *action, __unused UIView *sourceView, void (^completion)(BOOL)) { NSURL *url = self.backups[indexPath.row]; UIAlertController *confirm = [UIAlertController alertControllerWithTitle:@"Delete Backup?" message:@"This permanently removes this backup from the device. Other backups and selections are unchanged." preferredStyle:UIAlertControllerStyleAlert]; [confirm addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(__unused UIAlertAction *a) { completion(NO); }]]; [confirm addAction:[UIAlertAction actionWithTitle:@"Delete" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *a) { NSError *error = nil; BOOL ok = [NSFileManager.defaultManager removeItemAtURL:url error:&error]; if (ok) { [ATMAppModel.shared.backupManager setBackup:url pinned:NO]; [ATMAppModel.shared.ledger recordEvent:@"backup-deleted" packageID:nil details:nil]; } completion(ok); [self reloadData]; if (!ok) ATMShowError(self, @"Delete failed", error); }]]; [self presentViewController:confirm animated:YES completion:nil]; }]; UISwipeActionsConfiguration *configuration = [UISwipeActionsConfiguration configurationWithActions:@[delete]]; configuration.performsFirstActionWithFullSwipe = NO; return configuration; }
