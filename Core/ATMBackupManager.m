@@ -22,37 +22,14 @@ static const NSUInteger ATMEncryptedTagLength = CC_SHA256_DIGEST_LENGTH;
 static NSError *ATMBackupError(NSInteger code, NSString *message) { return [NSError errorWithDomain:ATMBackupErrorDomain code:code userInfo:@{NSLocalizedDescriptionKey: message}]; }
 
 static BOOL ATMCopyFileContents(NSURL *sourceURL, NSURL *destinationURL, NSInteger *failureCode) {
-    NSInputStream *input = [NSInputStream inputStreamWithURL:sourceURL];
-    NSOutputStream *output = [NSOutputStream outputStreamToFileAtPath:destinationURL.path append:NO];
-    if (!input || !output) { if (failureCode) *failureCode = !input ? 59 : 60; return NO; }
-    [input open];
-    [output open];
-    if (input.streamStatus == NSStreamStatusError || input.streamStatus == NSStreamStatusClosed) {
-        if (failureCode) *failureCode = 59;
-        [input close]; [output close];
-        return NO;
+    [NSFileManager.defaultManager removeItemAtURL:destinationURL error:nil];
+    NSError *copyError = nil;
+    BOOL copied = [NSFileManager.defaultManager copyItemAtURL:sourceURL toURL:destinationURL error:&copyError];
+    if (!copied && failureCode) {
+        BOOL destinationUnavailable = ![NSFileManager.defaultManager isWritableFileAtPath:destinationURL.URLByDeletingLastPathComponent.path];
+        *failureCode = destinationUnavailable ? 60 : 59;
     }
-    if (output.streamStatus == NSStreamStatusError || output.streamStatus == NSStreamStatusClosed) {
-        if (failureCode) *failureCode = 60;
-        [input close]; [output close];
-        return NO;
-    }
-    uint8_t buffer[64 * 1024];
-    BOOL success = YES;
-    while (success) {
-        NSInteger readCount = [input read:buffer maxLength:sizeof(buffer)];
-        if (readCount == 0) break;
-        if (readCount < 0) { if (failureCode) *failureCode = 59; success = NO; break; }
-        NSInteger written = 0;
-        while (written < readCount) {
-            NSInteger writeCount = [output write:buffer + written maxLength:(NSUInteger)(readCount - written)];
-            if (writeCount <= 0) { if (failureCode) *failureCode = 60; success = NO; break; }
-            written += writeCount;
-        }
-    }
-    [input close];
-    [output close];
-    return success;
+    return copied;
 }
 
 static NSString *ATMRunDPKGDebField(ATMEnvironment *environment, NSURL *debURL) {

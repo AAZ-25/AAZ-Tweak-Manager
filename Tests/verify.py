@@ -19,14 +19,14 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "17"
+assert info["CFBundleVersion"] == "18"
 assert info["LSSupportsOpeningDocumentsInPlace"] is True
 assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["AppIcon60x60"]
 
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta17" in control
+assert "Version: 0.1.0~beta18" in control
 assert "Priority: optional" in control
 
 excluded_directories = {".git", ".theos-build", "packages"}
@@ -93,10 +93,11 @@ assert "importStage=%@" in all_text
 assert "importErrorCode=%ld" in all_text
 assert "Search backups" in all_text
 assert "Pin" in all_text and "Unpin" in all_text
-assert 'NSSelectorFromString(@"initWithDocumentTypes:inMode:")' in all_text
-assert "ATMDocumentPickerInitFunction" in all_text
+assert "initForOpeningContentTypes:types asCopy:YES" in all_text
+assert "picker-copy-mode-created" in all_text
+assert "ATMDocumentPickerInitFunction" not in all_text
 assert '@[@"com.aaz.tweakmanager.backup", @"public.archive", @"public.data", @"public.item"]' in all_text
-assert "initForOpeningContentTypes:" not in all_text
+assert "initForOpeningContentTypes:" in all_text
 assert "Import Backup" in all_text
 assert "numberOfSectionsInTableView" in all_text
 assert "if (indexPath.section == 0) { [self importBackup]; return; }" in all_text
@@ -129,6 +130,10 @@ assert "NSFileCoordinatorReadingForUploading" not in (ROOT / "Core/ATMBackupMana
 assert "NSFileCoordinatorReadingWithoutChanges" not in all_text
 assert "isReadableFileAtPath:sourceURL.path" not in all_text
 assert "ATMCopyFileContents" in all_text
+assert "copyItemAtURL:sourceURL toURL:destinationURL" in all_text
+assert "NSInputStream" not in (ROOT / "Core/ATMBackupManager.m").read_text()
+assert "security-scope-granted" in all_text
+assert "security-scope-not-required" in all_text
 assert "BOOL accessStarted = [url startAccessingSecurityScopedResource]" in all_text
 assert "if (accessStarted) [url stopAccessingSecurityScopedResource]" in all_text
 assert "ATMHandleBackupURL" in all_text

@@ -397,12 +397,14 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
         ATMShowError(self, @"Import unavailable", [NSError errorWithDomain:@"ATM" code:62 userInfo:@{NSLocalizedDescriptionKey: @"Close the current window, then try Import Backup again."}]);
         return;
     }
-    SEL legacyImportSelector = NSSelectorFromString(@"initWithDocumentTypes:inMode:");
-    typedef UIDocumentPickerViewController *(*ATMDocumentPickerInitFunction)(id, SEL, NSArray<NSString *> *, NSUInteger);
-    NSArray<NSString *> *documentTypes = @[@"com.aaz.tweakmanager.backup", @"public.archive", @"public.data", @"public.item"];
-    UIDocumentPickerViewController *picker = ((ATMDocumentPickerInitFunction)objc_msgSend)([UIDocumentPickerViewController alloc], legacyImportSelector, documentTypes, 1);
-    if (!picker) { ATMSetImportDiagnosticState(@"picker-create-failed", 6); ATMShowError(self, @"Import unavailable", [NSError errorWithDomain:@"ATM" code:6 userInfo:@{NSLocalizedDescriptionKey: @"Files is unavailable."}]); return; }
-    ATMRecordImportDiagnosticEvent(@"picker-open-mode-created");
+    NSMutableArray<UTType *> *types = [NSMutableArray array];
+    for (NSString *identifier in @[@"com.aaz.tweakmanager.backup", @"public.archive", @"public.data", @"public.item"]) {
+        UTType *type = [UTType typeWithIdentifier:identifier];
+        if (type) [types addObject:type];
+    }
+    if (!types.count) { ATMSetImportDiagnosticState(@"picker-create-failed", 6); ATMShowError(self, @"Import unavailable", [NSError errorWithDomain:@"ATM" code:6 userInfo:@{NSLocalizedDescriptionKey: @"Files is unavailable."}]); return; }
+    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:types asCopy:YES];
+    ATMRecordImportDiagnosticEvent(@"picker-copy-mode-created");
     picker.delegate = self;
     picker.allowsMultipleSelection = YES;
     picker.presentationController.delegate = self; self.importPicker = picker;
@@ -435,6 +437,7 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
 }
 - (void)beginImportFromURL:(NSURL *)url {
     BOOL accessStarted = [url startAccessingSecurityScopedResource];
+    ATMRecordImportDiagnosticEvent(accessStarted ? @"security-scope-granted" : @"security-scope-not-required");
     UIAlertController *progress = [UIAlertController alertControllerWithTitle:@"Importing Backup" message:@"Preparing the selected file…" preferredStyle:UIAlertControllerStyleAlert];
     [self presentViewController:progress animated:YES completion:nil];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
