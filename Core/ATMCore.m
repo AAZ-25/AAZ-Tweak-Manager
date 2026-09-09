@@ -321,9 +321,10 @@ static BOOL ATMImportDiagnosticStageAllowed(NSString *stage) {
     dispatch_once(&onceToken, ^{
         allowedStages = [NSSet setWithArray:@[
             @"picker-requested", @"picker-presentation-blocked", @"picker-create-failed",
-            @"picker-legacy-created", @"picker-delegate-attached", @"picker-presentation-started",
+            @"picker-legacy-created", @"picker-open-mode-created", @"picker-delegate-attached",
+            @"picker-explicit-open-required", @"picker-presentation-started",
             @"picker-opened", @"picker-callback-multiple", @"picker-callback-single",
-            @"no-selection", @"file-selected", @"picker-cancel-delegate", @"picker-cancel-dismissal",
+            @"no-selection", @"file-selected", @"selection-count-invalid", @"picker-cancel-delegate", @"picker-cancel-dismissal",
             @"open-in-received", @"copying", @"invalid-selection", @"destination-unavailable",
             @"copy-coordinating", @"source-read-failed", @"destination-write-failed",
             @"coordination-failed", @"empty-file", @"staged", @"validating", @"duplicate",

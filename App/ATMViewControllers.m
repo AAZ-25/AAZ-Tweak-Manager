@@ -364,7 +364,7 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section { (void)tableView; return section == 0 ? nil : @"Inspect, compare, share, pin, or delete backups."; }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"backup"] ?: [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:@"backup"]; cell.imageView.tintColor = UIColor.systemBlueColor;
-    if (indexPath.section == 0) { cell.textLabel.text = @"Import Backup"; cell.detailTextLabel.text = @"Choose an .aaztmbackup file from Files"; cell.imageView.image = [UIImage systemImageNamed:@"square.and.arrow.down"]; cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator; cell.selectionStyle = UITableViewCellSelectionStyleDefault; return cell; }
+    if (indexPath.section == 0) { cell.textLabel.text = @"Import Backup"; cell.detailTextLabel.text = @"Select one backup, then tap Open"; cell.imageView.image = [UIImage systemImageNamed:@"square.and.arrow.down"]; cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator; cell.selectionStyle = UITableViewCellSelectionStyleDefault; return cell; }
     if (!self.backups.count) { cell.textLabel.text = self.allBackups.count ? @"No Matching Backups" : @"No Backups Yet"; cell.detailTextLabel.text = self.allBackups.count ? @"Try another search." : @"Create a backup or import an existing .aaztmbackup file."; cell.imageView.image = [UIImage systemImageNamed:@"externaldrive.badge.plus"]; cell.accessoryType = UITableViewCellAccessoryNone; return cell; }
     NSURL *url = self.backups[indexPath.row]; BOOL encrypted = [ATMAppModel.shared.backupManager isEncryptedBackup:url], pinned = [ATMAppModel.shared.backupManager isBackupPinned:url]; NSDictionary *manifest = encrypted ? nil : [ATMAppModel.shared.backupManager manifestForBackup:url error:nil]; NSDate *created = ATMDateFromISO(manifest[@"createdAt"]); if (!created) [url getResourceValue:&created forKey:NSURLContentModificationDateKey error:nil]; NSNumber *size = nil; [url getResourceValue:&size forKey:NSURLFileSizeKey error:nil]; NSString *sizeText = [NSByteCountFormatter stringFromByteCount:size.longLongValue countStyle:NSByteCountFormatterCountStyleFile]; NSString *profile = manifest[@"profileName"];
     cell.textLabel.text = [NSString stringWithFormat:@"%@Backup — %@", pinned ? @"Pinned • " : @"", ATMShortDateTime(created)];
@@ -400,13 +400,14 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
     SEL legacyImportSelector = NSSelectorFromString(@"initWithDocumentTypes:inMode:");
     typedef UIDocumentPickerViewController *(*ATMDocumentPickerInitFunction)(id, SEL, NSArray<NSString *> *, NSUInteger);
     NSArray<NSString *> *documentTypes = @[@"com.aaz.tweakmanager.backup", @"public.archive", @"public.data", @"public.item"];
-    UIDocumentPickerViewController *picker = ((ATMDocumentPickerInitFunction)objc_msgSend)([UIDocumentPickerViewController alloc], legacyImportSelector, documentTypes, 0);
+    UIDocumentPickerViewController *picker = ((ATMDocumentPickerInitFunction)objc_msgSend)([UIDocumentPickerViewController alloc], legacyImportSelector, documentTypes, UIDocumentPickerModeOpen);
     if (!picker) { ATMSetImportDiagnosticState(@"picker-create-failed", 6); ATMShowError(self, @"Import unavailable", [NSError errorWithDomain:@"ATM" code:6 userInfo:@{NSLocalizedDescriptionKey: @"Files is unavailable."}]); return; }
-    ATMRecordImportDiagnosticEvent(@"picker-legacy-created");
+    ATMRecordImportDiagnosticEvent(@"picker-open-mode-created");
     picker.delegate = self;
-    picker.allowsMultipleSelection = NO;
+    picker.allowsMultipleSelection = YES;
     picker.presentationController.delegate = self; self.importPicker = picker;
     ATMRecordImportDiagnosticEvent(@"picker-delegate-attached");
+    ATMRecordImportDiagnosticEvent(@"picker-explicit-open-required");
     ATMRecordImportDiagnosticEvent(@"picker-presentation-started");
     [presenter presentViewController:picker animated:YES completion:^{
         ATMSetImportDiagnosticState(@"picker-opened", 0);
@@ -420,6 +421,12 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
 }
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
     ATMRecordImportDiagnosticEvent(@"picker-callback-multiple");
+    if (urls.count != 1) {
+        controller.delegate = nil; self.importPicker = nil;
+        ATMSetImportDiagnosticState(@"selection-count-invalid", 63);
+        ATMShowError(self, @"Select one backup", [NSError errorWithDomain:@"ATM" code:63 userInfo:@{NSLocalizedDescriptionKey: @"Select exactly one .aaztmbackup file, then tap Open."}]);
+        return;
+    }
     [self handlePickedDocumentURL:urls.firstObject controller:controller];
 }
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentAtURL:(NSURL *)url {
