@@ -1,5 +1,6 @@
 #import "ATMViewControllers.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#import <objc/message.h>
 #import "ATMCore.h"
 #import "ATMBackupManager.h"
 
@@ -397,12 +398,10 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
         ATMShowError(self, @"Import unavailable", [NSError errorWithDomain:@"ATM" code:62 userInfo:@{NSLocalizedDescriptionKey: @"Close the current window, then try Import Backup again."}]);
         return;
     }
-    NSMutableArray<UTType *> *types = [NSMutableArray array];
-    for (NSString *identifier in @[@"com.aaz.tweakmanager.backup", @"public.archive", @"public.data", @"public.item"]) {
-        UTType *type = [UTType typeWithIdentifier:identifier]; if (type) [types addObject:type];
-    }
-    if (!types.count) { ATMShowError(self, @"Import unavailable", [NSError errorWithDomain:@"ATM" code:6 userInfo:@{NSLocalizedDescriptionKey: @"Files is unavailable."}]); return; }
-    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:types asCopy:YES];
+    SEL legacyImportSelector = NSSelectorFromString(@"initWithDocumentTypes:inMode:");
+    typedef UIDocumentPickerViewController *(*ATMDocumentPickerInitFunction)(id, SEL, NSArray<NSString *> *, NSUInteger);
+    UIDocumentPickerViewController *picker = ((ATMDocumentPickerInitFunction)objc_msgSend)([UIDocumentPickerViewController alloc], legacyImportSelector, @[@"public.data"], 0);
+    if (!picker) { ATMShowError(self, @"Import unavailable", [NSError errorWithDomain:@"ATM" code:6 userInfo:@{NSLocalizedDescriptionKey: @"Files is unavailable."}]); return; }
     picker.delegate = self;
     picker.allowsMultipleSelection = NO;
     picker.presentationController.delegate = self; self.importPicker = picker;

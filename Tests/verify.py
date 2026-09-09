@@ -19,14 +19,14 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "13"
+assert info["CFBundleVersion"] == "14"
 assert info["LSSupportsOpeningDocumentsInPlace"] is False
 assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["AppIcon60x60"]
 
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta13" in control
+assert "Version: 0.1.0~beta14" in control
 assert "Priority: optional" in control
 
 excluded_directories = {".git", ".theos-build", "packages"}
@@ -94,8 +94,10 @@ assert "importStage=%@" in all_text
 assert "importErrorCode=%ld" in all_text
 assert "Search backups" in all_text
 assert "Pin" in all_text and "Unpin" in all_text
-assert "initForOpeningContentTypes:types asCopy:YES" in all_text
-assert '@"com.aaz.tweakmanager.backup", @"public.archive", @"public.data", @"public.item"' in all_text
+assert 'NSSelectorFromString(@"initWithDocumentTypes:inMode:")' in all_text
+assert "ATMDocumentPickerInitFunction" in all_text
+assert '@[@"public.data"], 0' in all_text
+assert "initForOpeningContentTypes:" not in all_text
 assert "Import Backup" in all_text
 assert "numberOfSectionsInTableView" in all_text
 assert "if (indexPath.section == 0) { [self importBackup]; return; }" in all_text
