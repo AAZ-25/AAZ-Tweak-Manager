@@ -24,28 +24,38 @@ static NSError *ATMBackupError(NSInteger code, NSString *message) { return [NSEr
 
 @interface ATMImportDocument : UIDocument
 @property(nonatomic, strong) NSURL *stagedURL;
-@property(nonatomic, assign) NSInteger copyFailureCode;
+@property(nonatomic, assign) NSInteger loadFailureCode;
 @end
 
 @implementation ATMImportDocument
-- (BOOL)readFromURL:(NSURL *)url error:(NSError **)outError {
-    ATMSetImportDiagnosticState(@"document-read-called", 0);
-    NSNumber *isDirectory = nil;
-    [url getResourceValue:&isDirectory forKey:NSURLIsDirectoryKey error:nil];
-    if (isDirectory.boolValue) {
-        self.copyFailureCode = 56;
-        ATMSetImportDiagnosticState(@"invalid-selection", 56);
-        if (outError) *outError = ATMBackupError(56, @"Select a backup file, not a folder.");
+- (BOOL)loadFromContents:(id)contents ofType:(__unused NSString *)typeName error:(NSError **)outError {
+    ATMSetImportDiagnosticState(@"document-content-received", 0);
+    NSData *data = nil;
+    if ([contents isKindOfClass:NSData.class]) {
+        data = contents;
+    } else if ([contents isKindOfClass:NSFileWrapper.class]) {
+        NSFileWrapper *wrapper = contents;
+        if (wrapper.isRegularFile) data = wrapper.regularFileContents;
+        else {
+            self.loadFailureCode = 56;
+            ATMSetImportDiagnosticState(@"invalid-selection", 56);
+            if (outError) *outError = ATMBackupError(56, @"Select a backup file, not a folder.");
+            return NO;
+        }
+    }
+    if (!data) {
+        self.loadFailureCode = 58;
+        ATMSetImportDiagnosticState(@"document-content-invalid", 58);
+        if (outError) *outError = ATMBackupError(58, @"Files returned an unsupported document representation.");
         return NO;
     }
     [NSFileManager.defaultManager removeItemAtURL:self.stagedURL error:nil];
-    NSError *copyError = nil;
-    BOOL copied = [NSFileManager.defaultManager copyItemAtURL:url toURL:self.stagedURL error:&copyError];
-    if (copied) return YES;
+    NSError *writeError = nil;
+    if ([data writeToURL:self.stagedURL options:NSDataWritingAtomic error:&writeError]) return YES;
     BOOL destinationUnavailable = ![NSFileManager.defaultManager isWritableFileAtPath:self.stagedURL.URLByDeletingLastPathComponent.path];
-    self.copyFailureCode = destinationUnavailable ? 60 : 59;
-    ATMSetImportDiagnosticState(@"document-copy-failed", self.copyFailureCode);
-    if (outError) *outError = copyError ?: ATMBackupError(self.copyFailureCode, @"The selected backup could not be staged.");
+    self.loadFailureCode = destinationUnavailable ? 57 : 60;
+    ATMSetImportDiagnosticState(@"document-write-failed", self.loadFailureCode);
+    if (outError) *outError = ATMBackupError(self.loadFailureCode, @"The selected backup could not be saved to local storage.");
     return NO;
 }
 @end
@@ -206,15 +216,14 @@ static NSData *ATMDecryptArchive(NSData *container, NSString *password, NSError 
     NSURL *staged = [backupDirectory URLByAppendingPathComponent:[NSString stringWithFormat:@".%@.import.staged", NSUUID.UUID.UUIDString]];
     ATMImportDocument *document = [[ATMImportDocument alloc] initWithFileURL:sourceURL];
     document.stagedURL = staged;
-    document.copyFailureCode = 0;
+    document.loadFailureCode = 0;
     ATMSetImportDiagnosticState(@"document-open-started", 0);
     [document openWithCompletionHandler:^(BOOL success) {
         NSError *resultError = nil;
         if (!success) {
-            NSInteger code = document.copyFailureCode ?: 64;
-            NSString *stage = code == 56 ? @"invalid-selection" : (document.copyFailureCode ? @"document-copy-failed" : @"document-open-failed");
-            NSString *message = code == 56 ? @"Select a backup file, not a folder." : (code == 60 ? @"The selected backup could not be saved to local storage." : @"Files could not prepare the selected backup for import.");
-            ATMSetImportDiagnosticState(stage, code);
+            NSInteger code = document.loadFailureCode ?: 64;
+            NSString *message = code == 56 ? @"Select a backup file, not a folder." : ((code == 57 || code == 60) ? @"The selected backup could not be saved to local storage." : @"Files could not prepare the selected backup for import.");
+            if (!document.loadFailureCode) ATMSetImportDiagnosticState(@"document-open-failed", code);
             resultError = ATMBackupError(code, message);
             [NSFileManager.defaultManager removeItemAtURL:staged error:nil];
         } else {

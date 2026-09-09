@@ -38,7 +38,7 @@ jobs:
           DEB="$(find packages -name '*.deb' -type f | head -n 1)"
           test -n "$DEB"
           test "$(dpkg-deb -f "$DEB" Package)" = "com.aaz.tweakmanager"
-          test "$(dpkg-deb -f "$DEB" Version)" = "0.1.0~beta20"
+          test "$(dpkg-deb -f "$DEB" Version)" = "0.1.0~beta21"
           test "$(dpkg-deb -f "$DEB" Architecture)" = "iphoneos-arm64"
           dpkg-deb -c "$DEB" > "$RUNNER_TEMP/aaz-package.list"
           grep -Fq 'AAZTweakManager.app/AAZTweakManager' "$RUNNER_TEMP/aaz-package.list"

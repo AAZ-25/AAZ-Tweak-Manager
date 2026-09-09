@@ -19,7 +19,7 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "20"
+assert info["CFBundleVersion"] == "21"
 assert info["LSSupportsOpeningDocumentsInPlace"] is True
 
 with (ROOT / "Resources/AAZTweakManager.entitlements").open("rb") as handle:
@@ -32,7 +32,7 @@ assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["Ap
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta20" in control
+assert "Version: 0.1.0~beta21" in control
 assert "Priority: optional" in control
 
 excluded_directories = {".git", ".theos-build", "packages"}
@@ -143,13 +143,19 @@ assert "security-scope-not-required" in all_text
 assert "BOOL accessStarted = [url startAccessingSecurityScopedResource]" in all_text
 assert "if (accessStarted) [url stopAccessingSecurityScopedResource]" in all_text
 assert "@interface ATMImportDocument : UIDocument" in all_text
-assert "readFromURL:(NSURL *)url error:(NSError **)outError" in all_text
+assert "loadFromContents:(id)contents ofType:" in all_text
 assert "stageImportDocumentAtURL" in all_text
-assert "copyItemAtURL:url toURL:self.stagedURL" in all_text
+assert "document-content-received" in all_text
+assert "document-content-invalid" in all_text
+assert "document-write-failed" in all_text
+assert "regularFileContents" in all_text
+assert "writeToURL:self.stagedURL options:NSDataWritingAtomic" in all_text
+document_text = (ROOT / "Core/ATMBackupManager.m").read_text()
+document_class_body = document_text.split("@implementation ATMImportDocument", 1)[1].split("@end", 1)[0]
+assert "readFromURL:" not in document_class_body
+assert "copyItemAtURL:" not in document_class_body
 assert "[document openWithCompletionHandler:" in all_text
 assert "document-open-started" in all_text
-assert "document-read-called" in all_text
-assert "document-copy-failed" in all_text
 assert "document-open-failed" in all_text
 assert "[self beginPickerImportFromURL:url]" in all_text
 picker_document_body = (ROOT / "App/ATMViewControllers.m").read_text().split("- (void)beginPickerImportFromURL:", 1)[1].split("- (void)beginImportFromURL:", 1)[0]
