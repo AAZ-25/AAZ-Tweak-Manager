@@ -57,7 +57,7 @@ assert 'record.essential = essentialValue.length > 0 &&' in all_text
 assert 'record.essential = [fields[@"Essential"]' not in all_text
 assert "privacy=counts-and-stage-flags-only" in all_text
 assert "AAZ-Tweak-Manager-Diagnostic.txt" in all_text
-assert "Counts and stage flags only" in all_text
+assert "fixed stage labels only" in all_text
 assert "Select All" in all_text
 assert "Unselect All" in all_text
 assert "Search packages" in all_text
@@ -125,7 +125,8 @@ assert "ATMHandleBackupURL" in all_text
 assert "open-in-received" in all_text
 assert '"picker-opened"' in all_text
 assert '"file-selected"' in all_text
-assert '"picker-cancelled"' in all_text
+assert '"picker-cancel-delegate"' in all_text
+assert '"picker-cancel-dismissal"' in all_text
 assert "UTType.data" not in all_text
 assert "for (NSUInteger index = 0; index < titles.count; index++)" in all_text
 assert "AAZTweakManager_FRAMEWORKS = UIKit Foundation Security UniformTypeIdentifiers" in (ROOT / "Makefile").read_text()
