@@ -334,6 +334,7 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
 @property(nonatomic, assign) NSInteger sortMode;
 @property(nonatomic, strong, nullable) NSURL *pendingImportURL;
 @property(nonatomic, strong, nullable) UIDocumentPickerViewController *importPicker;
+- (void)beginPickerImportFromURL:(NSURL *)url;
 - (void)beginImportFromURL:(NSURL *)url;
 @end
 
@@ -419,7 +420,7 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
     controller.delegate = nil; self.importPicker = nil;
     if (!url) { ATMSetImportDiagnosticState(@"no-selection", 51); return; }
     ATMSetImportDiagnosticState(@"file-selected", 0);
-    [self beginImportFromURL:url];
+    [self beginPickerImportFromURL:url];
 }
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
     ATMRecordImportDiagnosticEvent(@"picker-callback-multiple");
@@ -434,6 +435,20 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentAtURL:(NSURL *)url {
     ATMRecordImportDiagnosticEvent(@"picker-callback-single");
     [self handlePickedDocumentURL:url controller:controller];
+}
+- (void)beginPickerImportFromURL:(NSURL *)url {
+    UIAlertController *progress = [UIAlertController alertControllerWithTitle:@"Importing Backup" message:@"Preparing the selected file…" preferredStyle:UIAlertControllerStyleAlert];
+    [self presentViewController:progress animated:YES completion:nil];
+    [ATMAppModel.shared.backupManager stageImportDocumentAtURL:url completion:^(NSURL *staged, NSError *error) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [progress dismissViewControllerAnimated:YES completion:^{
+                if (!staged) { ATMShowError(self, @"Import could not start", error); return; }
+                self.pendingImportURL = staged;
+                if ([ATMAppModel.shared.backupManager isEncryptedBackup:staged]) [self promptForImportPasswordForURL:staged];
+                else [self performImport:staged password:nil];
+            }];
+        });
+    }];
 }
 - (void)beginImportFromURL:(NSURL *)url {
     BOOL accessStarted = [url startAccessingSecurityScopedResource];

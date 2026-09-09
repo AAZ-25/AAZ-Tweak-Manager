@@ -2,6 +2,7 @@
 #import "ATMZipWriter.h"
 #import <CommonCrypto/CommonCrypto.h>
 #import <Security/Security.h>
+#import <UIKit/UIKit.h>
 #import <spawn.h>
 #import <signal.h>
 #import <sys/wait.h>
@@ -20,6 +21,34 @@ static const NSUInteger ATMEncryptedTagLength = CC_SHA256_DIGEST_LENGTH;
 @end
 
 static NSError *ATMBackupError(NSInteger code, NSString *message) { return [NSError errorWithDomain:ATMBackupErrorDomain code:code userInfo:@{NSLocalizedDescriptionKey: message}]; }
+
+@interface ATMImportDocument : UIDocument
+@property(nonatomic, strong) NSURL *stagedURL;
+@property(nonatomic, assign) NSInteger copyFailureCode;
+@end
+
+@implementation ATMImportDocument
+- (BOOL)readFromURL:(NSURL *)url error:(NSError **)outError {
+    ATMSetImportDiagnosticState(@"document-read-called", 0);
+    NSNumber *isDirectory = nil;
+    [url getResourceValue:&isDirectory forKey:NSURLIsDirectoryKey error:nil];
+    if (isDirectory.boolValue) {
+        self.copyFailureCode = 56;
+        ATMSetImportDiagnosticState(@"invalid-selection", 56);
+        if (outError) *outError = ATMBackupError(56, @"Select a backup file, not a folder.");
+        return NO;
+    }
+    [NSFileManager.defaultManager removeItemAtURL:self.stagedURL error:nil];
+    NSError *copyError = nil;
+    BOOL copied = [NSFileManager.defaultManager copyItemAtURL:url toURL:self.stagedURL error:&copyError];
+    if (copied) return YES;
+    BOOL destinationUnavailable = ![NSFileManager.defaultManager isWritableFileAtPath:self.stagedURL.URLByDeletingLastPathComponent.path];
+    self.copyFailureCode = destinationUnavailable ? 60 : 59;
+    ATMSetImportDiagnosticState(@"document-copy-failed", self.copyFailureCode);
+    if (outError) *outError = copyError ?: ATMBackupError(self.copyFailureCode, @"The selected backup could not be staged.");
+    return NO;
+}
+@end
 
 static BOOL ATMCopyFileContents(NSURL *sourceURL, NSURL *destinationURL, NSInteger *failureCode) {
     [NSFileManager.defaultManager removeItemAtURL:destinationURL error:nil];
@@ -158,6 +187,54 @@ static NSData *ATMDecryptArchive(NSData *container, NSString *password, NSError 
     [NSFileManager.defaultManager setAttributes:@{NSFileProtectionKey: NSFileProtectionCompleteUntilFirstUserAuthentication} ofItemAtPath:staged.path error:nil];
     ATMSetImportDiagnosticState(@"staged", 0);
     return staged;
+}
+- (void)stageImportDocumentAtURL:(NSURL *)sourceURL
+                      completion:(void (^)(NSURL *stagedURL, NSError *error))completion {
+    if (!completion) return;
+    if (!sourceURL) {
+        ATMSetImportDiagnosticState(@"document-open-failed", 51);
+        completion(nil, ATMBackupError(51, @"No backup file was selected."));
+        return;
+    }
+    NSError *directoryError = nil;
+    NSURL *backupDirectory = [NSURL fileURLWithPath:@"/var/mobile/Documents/AAZTweakManager/Backups" isDirectory:YES];
+    if (![NSFileManager.defaultManager createDirectoryAtURL:backupDirectory withIntermediateDirectories:YES attributes:@{NSFileProtectionKey: NSFileProtectionCompleteUntilFirstUserAuthentication} error:&directoryError]) {
+        ATMSetImportDiagnosticState(@"destination-unavailable", 57);
+        completion(nil, ATMBackupError(57, @"The backup storage folder is unavailable."));
+        return;
+    }
+    NSURL *staged = [backupDirectory URLByAppendingPathComponent:[NSString stringWithFormat:@".%@.import.staged", NSUUID.UUID.UUIDString]];
+    ATMImportDocument *document = [[ATMImportDocument alloc] initWithFileURL:sourceURL];
+    document.stagedURL = staged;
+    document.copyFailureCode = 0;
+    ATMSetImportDiagnosticState(@"document-open-started", 0);
+    [document openWithCompletionHandler:^(BOOL success) {
+        NSError *resultError = nil;
+        if (!success) {
+            NSInteger code = document.copyFailureCode ?: 64;
+            NSString *stage = code == 56 ? @"invalid-selection" : (document.copyFailureCode ? @"document-copy-failed" : @"document-open-failed");
+            NSString *message = code == 56 ? @"Select a backup file, not a folder." : (code == 60 ? @"The selected backup could not be saved to local storage." : @"Files could not prepare the selected backup for import.");
+            ATMSetImportDiagnosticState(stage, code);
+            resultError = ATMBackupError(code, message);
+            [NSFileManager.defaultManager removeItemAtURL:staged error:nil];
+        } else {
+            NSNumber *size = nil;
+            [staged getResourceValue:&size forKey:NSURLFileSizeKey error:nil];
+            if (size.unsignedLongLongValue == 0) {
+                [NSFileManager.defaultManager removeItemAtURL:staged error:nil];
+                ATMSetImportDiagnosticState(@"empty-file", 53);
+                resultError = ATMBackupError(53, @"The selected backup file is empty.");
+            } else {
+                [NSFileManager.defaultManager setAttributes:@{NSFileProtectionKey: NSFileProtectionCompleteUntilFirstUserAuthentication} ofItemAtPath:staged.path error:nil];
+                ATMSetImportDiagnosticState(@"staged", 0);
+            }
+        }
+        if (!success) {
+            completion(nil, resultError);
+            return;
+        }
+        [document closeWithCompletionHandler:^(__unused BOOL closed) { completion(resultError ? nil : staged, resultError); }];
+    }];
 }
 - (void)discardStagedImportAtURL:(NSURL *)stagedURL {
     if (!stagedURL || ![stagedURL.lastPathComponent hasSuffix:@".import.staged"] || ![[stagedURL.URLByDeletingLastPathComponent URLByStandardizingPath] isEqual:[self.backupDirectory URLByStandardizingPath]]) return;

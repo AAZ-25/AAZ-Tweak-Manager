@@ -326,6 +326,7 @@ static BOOL ATMImportDiagnosticStageAllowed(NSString *stage) {
             @"picker-opened", @"picker-callback-multiple", @"picker-callback-single",
             @"no-selection", @"file-selected", @"selection-count-invalid", @"security-scope-granted",
             @"security-scope-not-required", @"picker-cancel-delegate", @"picker-cancel-dismissal",
+            @"document-open-started", @"document-read-called", @"document-copy-failed", @"document-open-failed",
             @"open-in-received", @"copying", @"copy-direct-started", @"copy-direct-failed",
             @"coordination-fallback-started", @"coordination-accessor-called", @"invalid-selection", @"destination-unavailable",
             @"copy-coordinating", @"source-read-failed", @"destination-write-failed",
