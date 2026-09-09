@@ -19,7 +19,7 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "21"
+assert info["CFBundleVersion"] == "22"
 assert info["LSSupportsOpeningDocumentsInPlace"] is True
 
 with (ROOT / "Resources/AAZTweakManager.entitlements").open("rb") as handle:
@@ -32,7 +32,7 @@ assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["Ap
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta21" in control
+assert "Version: 0.1.0~beta22" in control
 assert "Priority: optional" in control
 
 excluded_directories = {".git", ".theos-build", "packages"}
@@ -116,6 +116,13 @@ assert "importDebugEnabled=%@" in all_text
 assert "importTraceFormat=1" in all_text
 assert "importDebugPrivacy=fixed-stage-labels-only" in all_text
 assert "picker-open-mode-created" in all_text
+assert "picker-host-identity-corrected" in all_text
+assert "picker-host-identity-unavailable" in all_text
+assert 'NSClassFromString(@"DOCConfiguration")' in all_text
+assert 'NSSelectorFromString(@"setHostIdentifier:")' in all_text
+assert "NSBundle.mainBundle.bundleIdentifier" in all_text
+assert "method_setImplementation" in all_text
+assert "ATMInstallDocumentPickerHostIdentityFix" in all_text
 assert "picker-explicit-open-required" in all_text
 assert "picker.allowsMultipleSelection = NO" in all_text
 assert "Select one backup, then tap Open" in all_text

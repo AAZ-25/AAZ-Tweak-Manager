@@ -1,11 +1,42 @@
 #import "ATMViewControllers.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <objc/message.h>
+#import <objc/runtime.h>
 #import "ATMCore.h"
 #import "ATMBackupManager.h"
 
 static NSString *const ATMDataChangedNotification = @"ATMDataChangedNotification";
 static NSString *const ATMShowExcludedKey = @"ATMShowExcludedPackages";
+
+typedef void (*ATMDocumentPickerHostSetter)(id object, SEL selector, NSString *hostIdentifier);
+static ATMDocumentPickerHostSetter ATMOriginalDocumentPickerHostSetter = NULL;
+
+static void ATMSetDocumentPickerHostIdentifier(id object, SEL selector, NSString *requestedIdentifier) {
+    NSString *bundleIdentifier = NSBundle.mainBundle.bundleIdentifier;
+    ATMOriginalDocumentPickerHostSetter(object, selector, bundleIdentifier.length ? bundleIdentifier : requestedIdentifier);
+}
+
+static BOOL ATMInstallDocumentPickerHostIdentityFix(void) {
+    static BOOL installed = NO;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        Class configurationClass = NSClassFromString(@"DOCConfiguration");
+        if (!configurationClass) {
+            NSBundle *documentsBundle = [NSBundle bundleWithPath:@"/System/Library/PrivateFrameworks/DocumentsUI.framework"];
+            [documentsBundle load];
+            configurationClass = NSClassFromString(@"DOCConfiguration");
+        }
+        SEL selector = NSSelectorFromString(@"setHostIdentifier:");
+        Method method = configurationClass ? class_getInstanceMethod(configurationClass, selector) : NULL;
+        if (!method) return;
+        IMP originalImplementation = method_getImplementation(method);
+        if (!originalImplementation) return;
+        ATMOriginalDocumentPickerHostSetter = (ATMDocumentPickerHostSetter)originalImplementation;
+        method_setImplementation(method, (IMP)ATMSetDocumentPickerHostIdentifier);
+        installed = YES;
+    });
+    return installed;
+}
 
 @interface ATMAppModel : NSObject
 @property(nonatomic, strong) ATMEnvironment *environment;
@@ -392,6 +423,12 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
 - (void)importBackup {
     ATMClearImportDiagnosticTrace();
     ATMSetImportDiagnosticState(@"picker-requested", 0);
+    if (!ATMInstallDocumentPickerHostIdentityFix()) {
+        ATMSetImportDiagnosticState(@"picker-host-identity-unavailable", 65);
+        ATMShowError(self, @"Import unavailable", [NSError errorWithDomain:@"ATM" code:65 userInfo:@{NSLocalizedDescriptionKey: @"Files identity support is unavailable on this iOS build."}]);
+        return;
+    }
+    ATMRecordImportDiagnosticEvent(@"picker-host-identity-corrected");
     UIViewController *presenter = self.navigationController ?: self;
     if (!self.view.window || presenter.presentedViewController) {
         ATMSetImportDiagnosticState(@"picker-presentation-blocked", 62);
