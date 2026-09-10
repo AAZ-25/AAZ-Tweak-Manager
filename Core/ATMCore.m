@@ -322,6 +322,7 @@ static BOOL ATMImportDiagnosticStageAllowed(NSString *stage) {
         allowedStages = [NSSet setWithArray:@[
             @"picker-requested", @"picker-presentation-blocked", @"picker-create-failed",
             @"container-ready", @"container-unavailable",
+            @"local-browser-opened", @"local-scan-started", @"local-scan-completed", @"local-scan-empty", @"local-file-selected",
             @"picker-host-identity-corrected", @"picker-host-identity-unavailable",
             @"picker-legacy-created", @"picker-open-mode-created", @"picker-copy-mode-created", @"picker-delegate-attached",
             @"picker-explicit-open-required", @"picker-presentation-started",

@@ -19,8 +19,8 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "23"
-assert info["LSSupportsOpeningDocumentsInPlace"] is True
+assert info["CFBundleVersion"] == "24"
+assert info["LSSupportsOpeningDocumentsInPlace"] is False
 
 with (ROOT / "Resources/AAZTweakManager.entitlements").open("rb") as handle:
     entitlements = plistlib.load(handle)
@@ -35,7 +35,7 @@ assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["Ap
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta23" in control
+assert "Version: 0.1.0~beta24" in control
 assert "Priority: optional" in control
 
 excluded_directories = {".git", ".theos-build", "packages"}
@@ -102,11 +102,6 @@ assert "importStage=%@" in all_text
 assert "importErrorCode=%ld" in all_text
 assert "Search backups" in all_text
 assert "Pin" in all_text and "Unpin" in all_text
-assert "initForOpeningContentTypes:types asCopy:YES" in all_text
-assert 'ATMRecordImportDiagnosticEvent(@"picker-copy-mode-created")' in all_text
-assert "ATMDocumentPickerInitFunction" not in all_text
-assert '@[@"com.aaz.tweakmanager.backup", @"public.archive", @"public.data", @"public.item"]' in all_text
-assert "initForOpeningContentTypes:" in all_text
 assert "Import Backup" in all_text
 assert "numberOfSectionsInTableView" in all_text
 assert "if (indexPath.section == 0) { [self importBackup]; return; }" in all_text
@@ -117,28 +112,26 @@ assert "ATMImportDiagnosticStageAllowed" in all_text
 assert "importDebugEnabled=%@" in all_text
 assert "importTraceFormat=1" in all_text
 assert "importDebugPrivacy=fixed-stage-labels-only" in all_text
-assert "picker-copy-mode-created" in all_text
-assert "ATMVerifyApplicationDataContainer" in all_text
-assert '@"/Containers/Data/Application/"' in all_text
-assert "container-ready" in all_text
-assert "container-unavailable" in all_text
-assert ".container-probe" in all_text
-assert "picker-host-identity-corrected" in all_text
-assert "picker-host-identity-unavailable" in all_text
-assert 'NSClassFromString(@"DOCConfiguration")' in all_text
-assert 'NSSelectorFromString(@"setHostIdentifier:")' in all_text
-assert "NSBundle.mainBundle.bundleIdentifier" in all_text
-assert "method_setImplementation" in all_text
-assert "ATMInstallDocumentPickerHostIdentityFix" in all_text
-assert "picker-explicit-open-required" in all_text
-assert "picker.allowsMultipleSelection = NO" in all_text
-assert "Select one backup, then tap Open" in all_text
-assert "selection-count-invalid" in all_text
-assert "picker-callback-multiple" in all_text
-assert "picker-callback-single" in all_text
-assert "didPickDocumentAtURL:(NSURL *)url" in all_text
+assert "ATMBackupFinderController" in all_text
+assert "Find local backups without opening Files" in all_text
+assert '@"/var/mobile/Documents"' in all_text
+assert '@"/var/mobile/Library/Mobile Documents"' in all_text
+assert '@"/var/mobile/Containers/Data/Application"' in all_text
+assert '@"/var/mobile/Containers/Shared/AppGroup"' in all_text
+assert '@"File Provider Storage"' in all_text
+assert 'isEqualToString:@"aaztmbackup"' in all_text
+assert "fileHandleForReadingFromURL:url" in all_text
+assert "AAZTME01" in all_text
+assert "local-browser-opened" in all_text
+assert "local-scan-started" in all_text
+assert "local-scan-completed" in all_text
+assert "local-scan-empty" in all_text
+assert "local-file-selected" in all_text
+view_controller_text = (ROOT / "App/ATMViewControllers.m").read_text()
+assert "UIDocumentPickerViewController" not in view_controller_text
+assert "DOCConfiguration" not in view_controller_text
+assert "UniformTypeIdentifiers" not in view_controller_text
 assert "filenames, paths, providers, passwords, or archive contents" in all_text
-assert "picker-presentation-blocked" in all_text
 assert "Already Imported" in all_text
 assert "NSFileCoordinator" in all_text
 assert "copy-direct-started" in all_text
@@ -161,16 +154,12 @@ assert "loadFromContents:(id)contents ofType:" not in all_text
 assert "stageImportDocumentAtURL" not in all_text
 assert "[document openWithCompletionHandler:" not in all_text
 assert "[self beginPickerImportFromURL:url]" not in all_text
-assert "[self beginImportFromURL:url]" in all_text
+assert "[weakSelf beginImportFromURL:url]" in all_text
 assert "ATMHandleBackupURL" in all_text
 assert "open-in-received" in all_text
-assert '"picker-opened"' in all_text
-assert '"file-selected"' in all_text
-assert '"picker-cancel-delegate"' in all_text
-assert '"picker-cancel-dismissal"' in all_text
-assert "UTType.data" not in all_text
+assert '"open-in-received"' in all_text
 assert "for (NSUInteger index = 0; index < titles.count; index++)" in all_text
-assert "AAZTweakManager_FRAMEWORKS = UIKit Foundation Security UniformTypeIdentifiers" in (ROOT / "Makefile").read_text()
+assert "AAZTweakManager_FRAMEWORKS = UIKit Foundation Security" in (ROOT / "Makefile").read_text()
 assert "Restore preview" in all_text or "Restore Preview" in all_text
 assert "The developer link opens externally" not in all_text
 assert '@"architecture": @"iphoneos-arm64"' in all_text

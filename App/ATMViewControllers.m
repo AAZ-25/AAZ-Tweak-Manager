@@ -1,58 +1,9 @@
 #import "ATMViewControllers.h"
-#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
-#import <objc/message.h>
-#import <objc/runtime.h>
 #import "ATMCore.h"
 #import "ATMBackupManager.h"
 
 static NSString *const ATMDataChangedNotification = @"ATMDataChangedNotification";
 static NSString *const ATMShowExcludedKey = @"ATMShowExcludedPackages";
-
-typedef void (*ATMDocumentPickerHostSetter)(id object, SEL selector, NSString *hostIdentifier);
-static ATMDocumentPickerHostSetter ATMOriginalDocumentPickerHostSetter = NULL;
-
-static void ATMSetDocumentPickerHostIdentifier(id object, SEL selector, NSString *requestedIdentifier) {
-    NSString *bundleIdentifier = NSBundle.mainBundle.bundleIdentifier;
-    ATMOriginalDocumentPickerHostSetter(object, selector, bundleIdentifier.length ? bundleIdentifier : requestedIdentifier);
-}
-
-static BOOL ATMInstallDocumentPickerHostIdentityFix(void) {
-    static BOOL installed = NO;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        Class configurationClass = NSClassFromString(@"DOCConfiguration");
-        if (!configurationClass) {
-            NSBundle *documentsBundle = [NSBundle bundleWithPath:@"/System/Library/PrivateFrameworks/DocumentsUI.framework"];
-            [documentsBundle load];
-            configurationClass = NSClassFromString(@"DOCConfiguration");
-        }
-        SEL selector = NSSelectorFromString(@"setHostIdentifier:");
-        Method method = configurationClass ? class_getInstanceMethod(configurationClass, selector) : NULL;
-        if (!method) return;
-        IMP originalImplementation = method_getImplementation(method);
-        if (!originalImplementation) return;
-        ATMOriginalDocumentPickerHostSetter = (ATMDocumentPickerHostSetter)originalImplementation;
-        method_setImplementation(method, (IMP)ATMSetDocumentPickerHostIdentifier);
-        installed = YES;
-    });
-    return installed;
-}
-
-static BOOL ATMVerifyApplicationDataContainer(void) {
-    NSString *home = NSHomeDirectory().stringByStandardizingPath;
-    if (![home containsString:@"/Containers/Data/Application/"]) return NO;
-    NSURL *documents = [NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
-    if (!documents) return NO;
-    NSError *directoryError = nil;
-    if (![NSFileManager.defaultManager createDirectoryAtURL:documents withIntermediateDirectories:YES attributes:nil error:&directoryError]) return NO;
-    NSURL *probe = [documents URLByAppendingPathComponent:[NSString stringWithFormat:@".%@.container-probe", NSUUID.UUID.UUIDString]];
-    NSData *expected = [@"AAZ" dataUsingEncoding:NSUTF8StringEncoding];
-    NSError *writeError = nil;
-    BOOL written = [expected writeToURL:probe options:NSDataWritingAtomic error:&writeError];
-    NSData *actual = written ? [NSData dataWithContentsOfURL:probe] : nil;
-    [NSFileManager.defaultManager removeItemAtURL:probe error:nil];
-    return written && [actual isEqualToData:expected];
-}
 
 @interface ATMAppModel : NSObject
 @property(nonatomic, strong) ATMEnvironment *environment;
@@ -374,13 +325,99 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
 }
 @end
 
-@interface ATMBackupsController : UITableViewController <UISearchResultsUpdating, UIDocumentPickerDelegate, UIAdaptivePresentationControllerDelegate>
+@interface ATMBackupFinderController : UITableViewController
+@property(nonatomic, copy) void (^selectionHandler)(NSURL *url);
+@property(nonatomic, copy) NSArray<NSDictionary *> *results;
+@property(nonatomic, assign) BOOL scanning;
+@end
+
+@implementation ATMBackupFinderController
+- (instancetype)init { return [super initWithStyle:UITableViewStyleInsetGrouped]; }
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.title = @"Choose Backup";
+    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemRefresh target:self action:@selector(scanForBackups)];
+    [self scanForBackups];
+}
+- (NSArray<NSURL *> *)scanRoots {
+    NSFileManager *manager = NSFileManager.defaultManager;
+    NSMutableArray<NSURL *> *roots = [NSMutableArray arrayWithObjects:
+        [NSURL fileURLWithPath:@"/var/mobile/Documents" isDirectory:YES],
+        [NSURL fileURLWithPath:@"/var/mobile/Library/Mobile Documents" isDirectory:YES], nil];
+    for (NSString *containerRoot in @[@"/var/mobile/Containers/Data/Application", @"/var/mobile/Containers/Shared/AppGroup"]) {
+        NSArray<NSString *> *containers = [manager contentsOfDirectoryAtPath:containerRoot error:nil] ?: @[];
+        for (NSString *container in containers) {
+            NSString *relative = [containerRoot hasSuffix:@"AppGroup"] ? @"File Provider Storage" : @"Documents";
+            NSString *candidate = [[containerRoot stringByAppendingPathComponent:container] stringByAppendingPathComponent:relative];
+            BOOL isDirectory = NO;
+            if ([manager fileExistsAtPath:candidate isDirectory:&isDirectory] && isDirectory) [roots addObject:[NSURL fileURLWithPath:candidate isDirectory:YES]];
+        }
+    }
+    return roots;
+}
+- (BOOL)isReadableBackupAtURL:(NSURL *)url {
+    NSError *error = nil;
+    NSFileHandle *handle = [NSFileHandle fileHandleForReadingFromURL:url error:&error];
+    if (!handle || error) return NO;
+    NSData *header = [handle readDataOfLength:8]; [handle closeFile];
+    if (header.length < 2) return NO;
+    const unsigned char *bytes = header.bytes;
+    if (bytes[0] == 'P' && bytes[1] == 'K') return YES;
+    NSData *encryptedHeader = [@"AAZTME01" dataUsingEncoding:NSUTF8StringEncoding];
+    return header.length == encryptedHeader.length && [header isEqualToData:encryptedHeader];
+}
+- (void)scanForBackups {
+    if (self.scanning) return;
+    self.scanning = YES; self.results = @[]; self.navigationItem.rightBarButtonItem.enabled = NO;
+    ATMSetImportDiagnosticState(@"local-scan-started", 0); [self.tableView reloadData];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSFileManager *manager = NSFileManager.defaultManager;
+        NSMutableDictionary<NSString *, NSDictionary *> *matches = [NSMutableDictionary dictionary];
+        NSString *ownedBackups = @"/var/mobile/Documents/AAZTweakManager/Backups/";
+        NSArray *keys = @[NSURLIsRegularFileKey, NSURLFileSizeKey, NSURLContentModificationDateKey];
+        for (NSURL *root in [self scanRoots]) {
+            NSDirectoryEnumerator<NSURL *> *enumerator = [manager enumeratorAtURL:root includingPropertiesForKeys:keys options:NSDirectoryEnumerationSkipsHiddenFiles errorHandler:^BOOL(NSURL *url, NSError *error) { (void)url; (void)error; return YES; }];
+            for (NSURL *url in enumerator) {
+                if (matches.count >= 200) break;
+                if ([url.path.stringByStandardizingPath hasPrefix:ownedBackups] || ![url.pathExtension.lowercaseString isEqualToString:@"aaztmbackup"]) continue;
+                NSNumber *regular = nil, *size = nil; NSDate *modified = nil;
+                if (![url getResourceValue:&regular forKey:NSURLIsRegularFileKey error:nil] || !regular.boolValue) continue;
+                if (![self isReadableBackupAtURL:url]) continue;
+                [url getResourceValue:&size forKey:NSURLFileSizeKey error:nil]; [url getResourceValue:&modified forKey:NSURLContentModificationDateKey error:nil];
+                NSString *path = url.path.stringByStandardizingPath; if (!path.length || matches[path]) continue;
+                NSString *location = [path containsString:@"/Mobile Documents/"] ? @"iCloud Drive" : ([path containsString:@"/File Provider Storage/"] ? @"Files provider" : @"On My iPhone");
+                matches[path] = @{ @"url": url, @"size": size ?: @0, @"modified": modified ?: NSDate.distantPast, @"location": location };
+            }
+        }
+        NSArray *sorted = [matches.allValues sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) { return [b[@"modified"] compare:a[@"modified"]]; }];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self.results = sorted; self.scanning = NO; self.navigationItem.rightBarButtonItem.enabled = YES;
+            ATMSetImportDiagnosticState(sorted.count ? @"local-scan-completed" : @"local-scan-empty", 0); [self.tableView reloadData];
+        });
+    });
+}
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { (void)tableView; (void)section; return self.results.count ?: 1; }
+- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section { (void)tableView; (void)section; return @"Only .aaztmbackup files are listed. File names and paths stay on this device and are never added to diagnostics."; }
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"found-backup"] ?: [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:@"found-backup"];
+    if (!self.results.count) { cell.textLabel.text = self.scanning ? @"Searching for backups…" : @"No readable backups found"; cell.detailTextLabel.text = self.scanning ? @"Checking local Files locations." : @"Use Files → Share → AAZ Tweak Manager, or download the file locally and refresh."; cell.imageView.image = [UIImage systemImageNamed:self.scanning ? @"magnifyingglass" : @"externaldrive.badge.questionmark"]; cell.accessoryType = UITableViewCellAccessoryNone; cell.selectionStyle = UITableViewCellSelectionStyleNone; return cell; }
+    NSDictionary *item = self.results[indexPath.row]; NSURL *url = item[@"url"]; NSString *size = [NSByteCountFormatter stringFromByteCount:[item[@"size"] longLongValue] countStyle:NSByteCountFormatterCountStyleFile];
+    cell.textLabel.text = url.lastPathComponent; cell.detailTextLabel.text = [NSString stringWithFormat:@"%@ • %@ • %@", item[@"location"], size, ATMShortDateTime(item[@"modified"])]; cell.imageView.image = [UIImage systemImageNamed:@"doc.zipper"]; cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator; cell.selectionStyle = UITableViewCellSelectionStyleDefault; return cell;
+}
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
+    [tableView deselectRowAtIndexPath:indexPath animated:YES]; if (!self.results.count) return;
+    NSURL *url = self.results[indexPath.row][@"url"];
+    ATMSetImportDiagnosticState(@"local-file-selected", 0);
+    void (^handler)(NSURL *) = self.selectionHandler; [self.navigationController popViewControllerAnimated:NO]; if (handler) handler(url);
+}
+@end
+
+@interface ATMBackupsController : UITableViewController <UISearchResultsUpdating>
 @property(nonatomic, copy) NSArray<NSURL *> *allBackups;
 @property(nonatomic, copy) NSArray<NSURL *> *backups;
 @property(nonatomic, strong) UISearchController *backupSearchController;
 @property(nonatomic, assign) NSInteger sortMode;
 @property(nonatomic, strong, nullable) NSURL *pendingImportURL;
-@property(nonatomic, strong, nullable) UIDocumentPickerViewController *importPicker;
 - (void)beginImportFromURL:(NSURL *)url;
 @end
 
@@ -411,7 +448,7 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section { (void)tableView; return section == 0 ? nil : @"Inspect, compare, share, pin, or delete backups."; }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"backup"] ?: [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:@"backup"]; cell.imageView.tintColor = UIColor.systemBlueColor;
-    if (indexPath.section == 0) { cell.textLabel.text = @"Import Backup"; cell.detailTextLabel.text = @"Select one backup, then tap Open"; cell.imageView.image = [UIImage systemImageNamed:@"square.and.arrow.down"]; cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator; cell.selectionStyle = UITableViewCellSelectionStyleDefault; return cell; }
+    if (indexPath.section == 0) { cell.textLabel.text = @"Import Backup"; cell.detailTextLabel.text = @"Find local backups without opening Files"; cell.imageView.image = [UIImage systemImageNamed:@"square.and.arrow.down"]; cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator; cell.selectionStyle = UITableViewCellSelectionStyleDefault; return cell; }
     if (!self.backups.count) { cell.textLabel.text = self.allBackups.count ? @"No Matching Backups" : @"No Backups Yet"; cell.detailTextLabel.text = self.allBackups.count ? @"Try another search." : @"Create a backup or import an existing .aaztmbackup file."; cell.imageView.image = [UIImage systemImageNamed:@"externaldrive.badge.plus"]; cell.accessoryType = UITableViewCellAccessoryNone; return cell; }
     NSURL *url = self.backups[indexPath.row]; BOOL encrypted = [ATMAppModel.shared.backupManager isEncryptedBackup:url], pinned = [ATMAppModel.shared.backupManager isBackupPinned:url]; NSDictionary *manifest = encrypted ? nil : [ATMAppModel.shared.backupManager manifestForBackup:url error:nil]; NSDate *created = ATMDateFromISO(manifest[@"createdAt"]); if (!created) [url getResourceValue:&created forKey:NSURLContentModificationDateKey error:nil]; NSNumber *size = nil; [url getResourceValue:&size forKey:NSURLFileSizeKey error:nil]; NSString *sizeText = [NSByteCountFormatter stringFromByteCount:size.longLongValue countStyle:NSByteCountFormatterCountStyleFile]; NSString *profile = manifest[@"profileName"];
     cell.textLabel.text = [NSString stringWithFormat:@"%@Backup — %@", pinned ? @"Pinned • " : @"", ATMShortDateTime(created)];
@@ -437,62 +474,11 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
 - (void)compareBackup:(NSURL *)older with:(NSURL *)newer { NSError *error = nil; NSDictionary *result = [ATMAppModel.shared.backupManager compareBackup:older withBackup:newer error:&error]; if (!result) { ATMShowError(self, @"Comparison unavailable", error); return; } NSString *message = [NSString stringWithFormat:@"Added: %@\nRemoved: %@\nUpdated: %@\nUnchanged: %@", result[@"added"], result[@"removed"], result[@"updated"], result[@"unchanged"]]; UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Backup Changes" message:message preferredStyle:UIAlertControllerStyleAlert]; [alert addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleCancel handler:nil]]; [self presentViewController:alert animated:YES completion:nil]; }
 - (void)importBackup {
     ATMClearImportDiagnosticTrace();
-    ATMSetImportDiagnosticState(@"picker-requested", 0);
-    if (!ATMVerifyApplicationDataContainer()) {
-        ATMSetImportDiagnosticState(@"container-unavailable", 66);
-        ATMShowError(self, @"Import unavailable", [NSError errorWithDomain:@"ATM" code:66 userInfo:@{NSLocalizedDescriptionKey: @"The application data container is unavailable. Reinstall this build, then try again."}]);
-        return;
-    }
-    ATMRecordImportDiagnosticEvent(@"container-ready");
-    if (!ATMInstallDocumentPickerHostIdentityFix()) {
-        ATMSetImportDiagnosticState(@"picker-host-identity-unavailable", 65);
-        ATMShowError(self, @"Import unavailable", [NSError errorWithDomain:@"ATM" code:65 userInfo:@{NSLocalizedDescriptionKey: @"Files identity support is unavailable on this iOS build."}]);
-        return;
-    }
-    ATMRecordImportDiagnosticEvent(@"picker-host-identity-corrected");
-    UIViewController *presenter = self.navigationController ?: self;
-    if (!self.view.window || presenter.presentedViewController) {
-        ATMSetImportDiagnosticState(@"picker-presentation-blocked", 62);
-        ATMShowError(self, @"Import unavailable", [NSError errorWithDomain:@"ATM" code:62 userInfo:@{NSLocalizedDescriptionKey: @"Close the current window, then try Import Backup again."}]);
-        return;
-    }
-    NSMutableArray<UTType *> *types = [NSMutableArray array];
-    for (NSString *identifier in @[@"com.aaz.tweakmanager.backup", @"public.archive", @"public.data", @"public.item"]) {
-        UTType *type = [UTType typeWithIdentifier:identifier];
-        if (type) [types addObject:type];
-    }
-    if (!types.count) { ATMSetImportDiagnosticState(@"picker-create-failed", 6); ATMShowError(self, @"Import unavailable", [NSError errorWithDomain:@"ATM" code:6 userInfo:@{NSLocalizedDescriptionKey: @"Files is unavailable."}]); return; }
-    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:types asCopy:YES];
-    ATMRecordImportDiagnosticEvent(@"picker-copy-mode-created");
-    picker.delegate = self;
-    picker.allowsMultipleSelection = NO;
-    picker.presentationController.delegate = self; self.importPicker = picker;
-    ATMRecordImportDiagnosticEvent(@"picker-delegate-attached");
-    ATMRecordImportDiagnosticEvent(@"picker-explicit-open-required");
-    ATMRecordImportDiagnosticEvent(@"picker-presentation-started");
-    [presenter presentViewController:picker animated:YES completion:^{
-        ATMSetImportDiagnosticState(@"picker-opened", 0);
-    }];
-}
-- (void)handlePickedDocumentURL:(NSURL *)url controller:(UIDocumentPickerViewController *)controller {
-    controller.delegate = nil; self.importPicker = nil;
-    if (!url) { ATMSetImportDiagnosticState(@"no-selection", 51); return; }
-    ATMSetImportDiagnosticState(@"file-selected", 0);
-    [self beginImportFromURL:url];
-}
-- (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
-    ATMRecordImportDiagnosticEvent(@"picker-callback-multiple");
-    if (urls.count != 1) {
-        controller.delegate = nil; self.importPicker = nil;
-        ATMSetImportDiagnosticState(@"selection-count-invalid", 63);
-        ATMShowError(self, @"Select one backup", [NSError errorWithDomain:@"ATM" code:63 userInfo:@{NSLocalizedDescriptionKey: @"Select exactly one .aaztmbackup file, then tap Open."}]);
-        return;
-    }
-    [self handlePickedDocumentURL:urls.firstObject controller:controller];
-}
-- (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentAtURL:(NSURL *)url {
-    ATMRecordImportDiagnosticEvent(@"picker-callback-single");
-    [self handlePickedDocumentURL:url controller:controller];
+    ATMSetImportDiagnosticState(@"local-browser-opened", 0);
+    ATMBackupFinderController *finder = [ATMBackupFinderController new];
+    __weak typeof(self) weakSelf = self;
+    finder.selectionHandler = ^(NSURL *url) { [weakSelf beginImportFromURL:url]; };
+    [self.navigationController pushViewController:finder animated:YES];
 }
 - (void)beginImportFromURL:(NSURL *)url {
     BOOL accessStarted = [url startAccessingSecurityScopedResource];
@@ -513,8 +499,6 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
         });
     });
 }
-- (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller { controller.delegate = nil; self.importPicker = nil; ATMSetImportDiagnosticState(@"picker-cancel-delegate", 0); }
-- (void)presentationControllerDidDismiss:(UIPresentationController *)presentationController { if (presentationController.presentedViewController == self.importPicker) { self.importPicker.delegate = nil; self.importPicker = nil; ATMSetImportDiagnosticState(@"picker-cancel-dismissal", 0); } }
 - (void)promptForImportPasswordForURL:(NSURL *)url {
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Import Encrypted Backup" message:@"The password is used only for this import and is never stored." preferredStyle:UIAlertControllerStyleAlert];
     [alert addTextFieldWithConfigurationHandler:^(UITextField *field) { field.placeholder = @"Password"; field.secureTextEntry = YES; }];
