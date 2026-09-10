@@ -161,6 +161,8 @@ assert "AAZBackupImporter_RESOURCE_FILES" not in makefile_text
 assert "share-extension-received" in all_text
 assert "pendingImportURLs" in all_text
 assert "In Files, Share → Save to AAZ Tweak Manager" in all_text
+assert '@"Preparing backup…"' in extension_text
+assert '@"Backup saved. Open AAZ Tweak Manager to verify and import it."' in extension_text
 assert "filenames, paths, providers, passwords, or archive contents" in all_text
 assert "Already Imported" in all_text
 assert "NSFileCoordinator" in all_text
