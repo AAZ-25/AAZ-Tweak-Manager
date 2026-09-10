@@ -2,5 +2,5 @@
 
 NS_ASSUME_NONNULL_BEGIN
 UIViewController *ATMCreateRootController(void);
-BOOL ATMHandleBackupURL(UIViewController *rootController, NSURL *url);
+BOOL ATMHandlePendingImport(UIViewController *rootController);
 NS_ASSUME_NONNULL_END

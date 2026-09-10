@@ -17,24 +17,7 @@
     <key>CFBundleShortVersionString</key>
     <string>0.1.0</string>
     <key>CFBundleVersion</key>
-	<string>24</string>
-    <key>CFBundleDocumentTypes</key>
-    <array>
-        <dict>
-            <key>CFBundleTypeName</key>
-            <string>AAZ Tweak Manager Backup</string>
-            <key>LSItemContentTypes</key>
-            <array>
-                <string>com.aaz.tweakmanager.backup</string>
-            </array>
-            <key>CFBundleTypeRole</key>
-            <string>Viewer</string>
-            <key>CFBundleTypeExtensions</key>
-            <array><string>aaztmbackup</string></array>
-            <key>LSHandlerRank</key>
-            <string>Owner</string>
-        </dict>
-    </array>
+	<string>25</string>
     <key>UTExportedTypeDeclarations</key>
     <array>
         <dict>

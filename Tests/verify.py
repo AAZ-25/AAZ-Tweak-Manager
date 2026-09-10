@@ -11,6 +11,8 @@ required = [
     "Resources/AppIcon60x60@2x.png", "Resources/AppIcon60x60@3x.png", "main.m",
     "App/ATMAppDelegate.m", "App/ATMViewControllers.m",
     "Core/ATMCore.m", "Core/ATMBackupManager.m", "Core/ATMZipWriter.m",
+    "Extension/ShareViewController.m", "Extension/Resources/Info.plist",
+    "Extension/AAZBackupImporter.entitlements",
 ]
 for relative in required:
     assert (ROOT / relative).is_file(), f"missing {relative}"
@@ -19,8 +21,9 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "24"
+assert info["CFBundleVersion"] == "25"
 assert info["LSSupportsOpeningDocumentsInPlace"] is False
+assert "CFBundleDocumentTypes" not in info
 
 with (ROOT / "Resources/AAZTweakManager.entitlements").open("rb") as handle:
     entitlements = plistlib.load(handle)
@@ -29,13 +32,32 @@ assert entitlements["application-identifier"] == info["CFBundleIdentifier"]
 assert entitlements["com.apple.private.security.no-sandbox"] is True
 assert entitlements["com.apple.private.security.storage.AppBundles"] is True
 assert entitlements["com.apple.private.security.storage.AppDataContainers"] is True
+assert entitlements["com.apple.security.application-groups"] == ["group.com.aaz.tweakmanager"]
 assert "com.apple.private.security.no-container" not in entitlements
 assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["AppIcon60x60"]
+
+with (ROOT / "Extension/Resources/Info.plist").open("rb") as handle:
+    extension_info = plistlib.load(handle)
+assert extension_info["CFBundleIdentifier"] == "com.aaz.tweakmanager.importer"
+assert extension_info["CFBundleVersion"] == "25"
+assert extension_info["CFBundlePackageType"] == "XPC!"
+extension_definition = extension_info["NSExtension"]
+assert extension_definition["NSExtensionPointIdentifier"] == "com.apple.share-services"
+assert extension_definition["NSExtensionPrincipalClass"] == "AAZShareViewController"
+activation = extension_definition["NSExtensionAttributes"]["NSExtensionActivationRule"]
+assert activation == {"NSExtensionActivationSupportsFileWithMaxCount": 1}
+
+with (ROOT / "Extension/AAZBackupImporter.entitlements").open("rb") as handle:
+    extension_entitlements = plistlib.load(handle)
+assert extension_entitlements == {
+    "application-identifier": "com.aaz.tweakmanager.importer",
+    "com.apple.security.application-groups": ["group.com.aaz.tweakmanager"],
+}
 
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta24" in control
+assert "Version: 0.1.0~beta25" in control
 assert "Priority: optional" in control
 
 excluded_directories = {".git", ".theos-build", "packages"}
@@ -112,25 +134,33 @@ assert "ATMImportDiagnosticStageAllowed" in all_text
 assert "importDebugEnabled=%@" in all_text
 assert "importTraceFormat=1" in all_text
 assert "importDebugPrivacy=fixed-stage-labels-only" in all_text
-assert "ATMBackupFinderController" in all_text
-assert "Find local backups without opening Files" in all_text
-assert '@"/var/mobile/Documents"' in all_text
-assert '@"/var/mobile/Library/Mobile Documents"' in all_text
-assert '@"/var/mobile/Containers/Data/Application"' in all_text
-assert '@"/var/mobile/Containers/Shared/AppGroup"' in all_text
-assert '@"File Provider Storage"' in all_text
-assert 'isEqualToString:@"aaztmbackup"' in all_text
-assert "fileHandleForReadingFromURL:url" in all_text
-assert "AAZTME01" in all_text
-assert "local-browser-opened" in all_text
-assert "local-scan-started" in all_text
-assert "local-scan-completed" in all_text
-assert "local-scan-empty" in all_text
-assert "local-file-selected" in all_text
 view_controller_text = (ROOT / "App/ATMViewControllers.m").read_text()
+extension_text = (ROOT / "Extension/ShareViewController.m").read_text()
+makefile_text = (ROOT / "Makefile").read_text()
+assert "ATMBackupFinderController" not in view_controller_text
+assert "Find local backups without opening Files" not in view_controller_text
 assert "UIDocumentPickerViewController" not in view_controller_text
 assert "DOCConfiguration" not in view_controller_text
 assert "UniformTypeIdentifiers" not in view_controller_text
+assert "loadFileRepresentationForTypeIdentifier" in extension_text
+assert "ATMMaterializeBackup(url)" in extension_text
+assert "containerURLForSecurityApplicationGroupIdentifier:ATMImportGroup" in extension_text
+assert "group.com.aaz.tweakmanager" in extension_text
+assert "O_RDONLY | O_CLOEXEC" in extension_text
+assert "O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC" in extension_text
+assert "fsync(destination)" in extension_text
+assert "rename(partialURL.fileSystemRepresentation, finalURL.fileSystemRepresentation)" in extension_text
+assert "ATMHasBackupHeader" in extension_text
+assert "NSFileCoordinator" not in extension_text
+assert "startAccessingSecurityScopedResource" not in extension_text
+assert "APPEX_NAME = AAZBackupImporter" in makefile_text
+assert "AAZBackupImporter_INSTALL_PATH = /Applications/AAZTweakManager.app/PlugIns" in makefile_text
+assert "include $(THEOS_MAKE_PATH)/appex.mk" in makefile_text
+assert "AAZBackupImporter_RESOURCE_DIRS = Extension/Resources" in makefile_text
+assert "AAZBackupImporter_RESOURCE_FILES" not in makefile_text
+assert "share-extension-received" in all_text
+assert "pendingImportURLs" in all_text
+assert "In Files, Share → Save to AAZ Tweak Manager" in all_text
 assert "filenames, paths, providers, passwords, or archive contents" in all_text
 assert "Already Imported" in all_text
 assert "NSFileCoordinator" in all_text
@@ -154,10 +184,7 @@ assert "loadFromContents:(id)contents ofType:" not in all_text
 assert "stageImportDocumentAtURL" not in all_text
 assert "[document openWithCompletionHandler:" not in all_text
 assert "[self beginPickerImportFromURL:url]" not in all_text
-assert "[weakSelf beginImportFromURL:url]" in all_text
-assert "ATMHandleBackupURL" in all_text
-assert "open-in-received" in all_text
-assert '"open-in-received"' in all_text
+assert "ATMHandlePendingImport" in all_text
 assert "for (NSUInteger index = 0; index < titles.count; index++)" in all_text
 assert "AAZTweakManager_FRAMEWORKS = UIKit Foundation Security" in (ROOT / "Makefile").read_text()
 assert "Restore preview" in all_text or "Restore Preview" in all_text

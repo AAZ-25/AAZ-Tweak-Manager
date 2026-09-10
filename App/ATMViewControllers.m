@@ -325,92 +325,6 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
 }
 @end
 
-@interface ATMBackupFinderController : UITableViewController
-@property(nonatomic, copy) void (^selectionHandler)(NSURL *url);
-@property(nonatomic, copy) NSArray<NSDictionary *> *results;
-@property(nonatomic, assign) BOOL scanning;
-@end
-
-@implementation ATMBackupFinderController
-- (instancetype)init { return [super initWithStyle:UITableViewStyleInsetGrouped]; }
-- (void)viewDidLoad {
-    [super viewDidLoad];
-    self.title = @"Choose Backup";
-    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemRefresh target:self action:@selector(scanForBackups)];
-    [self scanForBackups];
-}
-- (NSArray<NSURL *> *)scanRoots {
-    NSFileManager *manager = NSFileManager.defaultManager;
-    NSMutableArray<NSURL *> *roots = [NSMutableArray arrayWithObjects:
-        [NSURL fileURLWithPath:@"/var/mobile/Documents" isDirectory:YES],
-        [NSURL fileURLWithPath:@"/var/mobile/Library/Mobile Documents" isDirectory:YES], nil];
-    for (NSString *containerRoot in @[@"/var/mobile/Containers/Data/Application", @"/var/mobile/Containers/Shared/AppGroup"]) {
-        NSArray<NSString *> *containers = [manager contentsOfDirectoryAtPath:containerRoot error:nil] ?: @[];
-        for (NSString *container in containers) {
-            NSString *relative = [containerRoot hasSuffix:@"AppGroup"] ? @"File Provider Storage" : @"Documents";
-            NSString *candidate = [[containerRoot stringByAppendingPathComponent:container] stringByAppendingPathComponent:relative];
-            BOOL isDirectory = NO;
-            if ([manager fileExistsAtPath:candidate isDirectory:&isDirectory] && isDirectory) [roots addObject:[NSURL fileURLWithPath:candidate isDirectory:YES]];
-        }
-    }
-    return roots;
-}
-- (BOOL)isReadableBackupAtURL:(NSURL *)url {
-    NSError *error = nil;
-    NSFileHandle *handle = [NSFileHandle fileHandleForReadingFromURL:url error:&error];
-    if (!handle || error) return NO;
-    NSData *header = [handle readDataOfLength:8]; [handle closeFile];
-    if (header.length < 2) return NO;
-    const unsigned char *bytes = header.bytes;
-    if (bytes[0] == 'P' && bytes[1] == 'K') return YES;
-    NSData *encryptedHeader = [@"AAZTME01" dataUsingEncoding:NSUTF8StringEncoding];
-    return header.length == encryptedHeader.length && [header isEqualToData:encryptedHeader];
-}
-- (void)scanForBackups {
-    if (self.scanning) return;
-    self.scanning = YES; self.results = @[]; self.navigationItem.rightBarButtonItem.enabled = NO;
-    ATMSetImportDiagnosticState(@"local-scan-started", 0); [self.tableView reloadData];
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        NSFileManager *manager = NSFileManager.defaultManager;
-        NSMutableDictionary<NSString *, NSDictionary *> *matches = [NSMutableDictionary dictionary];
-        NSString *ownedBackups = @"/var/mobile/Documents/AAZTweakManager/Backups/";
-        NSArray *keys = @[NSURLIsRegularFileKey, NSURLFileSizeKey, NSURLContentModificationDateKey];
-        for (NSURL *root in [self scanRoots]) {
-            NSDirectoryEnumerator<NSURL *> *enumerator = [manager enumeratorAtURL:root includingPropertiesForKeys:keys options:NSDirectoryEnumerationSkipsHiddenFiles errorHandler:^BOOL(NSURL *url, NSError *error) { (void)url; (void)error; return YES; }];
-            for (NSURL *url in enumerator) {
-                if (matches.count >= 200) break;
-                if ([url.path.stringByStandardizingPath hasPrefix:ownedBackups] || ![url.pathExtension.lowercaseString isEqualToString:@"aaztmbackup"]) continue;
-                NSNumber *regular = nil, *size = nil; NSDate *modified = nil;
-                if (![url getResourceValue:&regular forKey:NSURLIsRegularFileKey error:nil] || !regular.boolValue) continue;
-                if (![self isReadableBackupAtURL:url]) continue;
-                [url getResourceValue:&size forKey:NSURLFileSizeKey error:nil]; [url getResourceValue:&modified forKey:NSURLContentModificationDateKey error:nil];
-                NSString *path = url.path.stringByStandardizingPath; if (!path.length || matches[path]) continue;
-                NSString *location = [path containsString:@"/Mobile Documents/"] ? @"iCloud Drive" : ([path containsString:@"/File Provider Storage/"] ? @"Files provider" : @"On My iPhone");
-                matches[path] = @{ @"url": url, @"size": size ?: @0, @"modified": modified ?: NSDate.distantPast, @"location": location };
-            }
-        }
-        NSArray *sorted = [matches.allValues sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) { return [b[@"modified"] compare:a[@"modified"]]; }];
-        dispatch_async(dispatch_get_main_queue(), ^{
-            self.results = sorted; self.scanning = NO; self.navigationItem.rightBarButtonItem.enabled = YES;
-            ATMSetImportDiagnosticState(sorted.count ? @"local-scan-completed" : @"local-scan-empty", 0); [self.tableView reloadData];
-        });
-    });
-}
-- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { (void)tableView; (void)section; return self.results.count ?: 1; }
-- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section { (void)tableView; (void)section; return @"Only .aaztmbackup files are listed. File names and paths stay on this device and are never added to diagnostics."; }
-- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
-    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"found-backup"] ?: [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:@"found-backup"];
-    if (!self.results.count) { cell.textLabel.text = self.scanning ? @"Searching for backups…" : @"No readable backups found"; cell.detailTextLabel.text = self.scanning ? @"Checking local Files locations." : @"Use Files → Share → AAZ Tweak Manager, or download the file locally and refresh."; cell.imageView.image = [UIImage systemImageNamed:self.scanning ? @"magnifyingglass" : @"externaldrive.badge.questionmark"]; cell.accessoryType = UITableViewCellAccessoryNone; cell.selectionStyle = UITableViewCellSelectionStyleNone; return cell; }
-    NSDictionary *item = self.results[indexPath.row]; NSURL *url = item[@"url"]; NSString *size = [NSByteCountFormatter stringFromByteCount:[item[@"size"] longLongValue] countStyle:NSByteCountFormatterCountStyleFile];
-    cell.textLabel.text = url.lastPathComponent; cell.detailTextLabel.text = [NSString stringWithFormat:@"%@ • %@ • %@", item[@"location"], size, ATMShortDateTime(item[@"modified"])]; cell.imageView.image = [UIImage systemImageNamed:@"doc.zipper"]; cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator; cell.selectionStyle = UITableViewCellSelectionStyleDefault; return cell;
-}
-- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
-    [tableView deselectRowAtIndexPath:indexPath animated:YES]; if (!self.results.count) return;
-    NSURL *url = self.results[indexPath.row][@"url"];
-    ATMSetImportDiagnosticState(@"local-file-selected", 0);
-    void (^handler)(NSURL *) = self.selectionHandler; [self.navigationController popViewControllerAnimated:NO]; if (handler) handler(url);
-}
-@end
 
 @interface ATMBackupsController : UITableViewController <UISearchResultsUpdating>
 @property(nonatomic, copy) NSArray<NSURL *> *allBackups;
@@ -418,7 +332,9 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
 @property(nonatomic, strong) UISearchController *backupSearchController;
 @property(nonatomic, assign) NSInteger sortMode;
 @property(nonatomic, strong, nullable) NSURL *pendingImportURL;
+@property(nonatomic, assign) BOOL processingPendingImport;
 - (void)beginImportFromURL:(NSURL *)url;
+- (void)consumeNextPendingImport;
 @end
 
 @implementation ATMBackupsController
@@ -430,6 +346,7 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
 }
 - (void)dealloc { [NSNotificationCenter.defaultCenter removeObserver:self]; }
 - (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self reloadData]; }
+- (void)viewDidAppear:(BOOL)animated { [super viewDidAppear:animated]; [self consumeNextPendingImport]; }
 - (void)configureSortMenu {
     __weak typeof(self) weakSelf = self; NSArray *titles = @[@"Newest", @"Oldest", @"Largest", @"Smallest"];
     NSMutableArray *actions = [NSMutableArray array]; for (NSUInteger index = 0; index < titles.count; index++) { UIAction *action = [UIAction actionWithTitle:titles[index] image:nil identifier:nil handler:^(__unused UIAction *item) { weakSelf.sortMode = (NSInteger)index; [weakSelf reloadData]; [weakSelf configureSortMenu]; }]; action.state = self.sortMode == (NSInteger)index ? UIMenuElementStateOn : UIMenuElementStateOff; [actions addObject:action]; }
@@ -448,7 +365,7 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section { (void)tableView; return section == 0 ? nil : @"Inspect, compare, share, pin, or delete backups."; }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"backup"] ?: [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:@"backup"]; cell.imageView.tintColor = UIColor.systemBlueColor;
-    if (indexPath.section == 0) { cell.textLabel.text = @"Import Backup"; cell.detailTextLabel.text = @"Find local backups without opening Files"; cell.imageView.image = [UIImage systemImageNamed:@"square.and.arrow.down"]; cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator; cell.selectionStyle = UITableViewCellSelectionStyleDefault; return cell; }
+    if (indexPath.section == 0) { cell.textLabel.text = @"Import Backup"; cell.detailTextLabel.text = @"In Files, Share → Save to AAZ Tweak Manager"; cell.imageView.image = [UIImage systemImageNamed:@"square.and.arrow.down"]; cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator; cell.selectionStyle = UITableViewCellSelectionStyleDefault; return cell; }
     if (!self.backups.count) { cell.textLabel.text = self.allBackups.count ? @"No Matching Backups" : @"No Backups Yet"; cell.detailTextLabel.text = self.allBackups.count ? @"Try another search." : @"Create a backup or import an existing .aaztmbackup file."; cell.imageView.image = [UIImage systemImageNamed:@"externaldrive.badge.plus"]; cell.accessoryType = UITableViewCellAccessoryNone; return cell; }
     NSURL *url = self.backups[indexPath.row]; BOOL encrypted = [ATMAppModel.shared.backupManager isEncryptedBackup:url], pinned = [ATMAppModel.shared.backupManager isBackupPinned:url]; NSDictionary *manifest = encrypted ? nil : [ATMAppModel.shared.backupManager manifestForBackup:url error:nil]; NSDate *created = ATMDateFromISO(manifest[@"createdAt"]); if (!created) [url getResourceValue:&created forKey:NSURLContentModificationDateKey error:nil]; NSNumber *size = nil; [url getResourceValue:&size forKey:NSURLFileSizeKey error:nil]; NSString *sizeText = [NSByteCountFormatter stringFromByteCount:size.longLongValue countStyle:NSByteCountFormatterCountStyleFile]; NSString *profile = manifest[@"profileName"];
     cell.textLabel.text = [NSString stringWithFormat:@"%@Backup — %@", pinned ? @"Pinned • " : @"", ATMShortDateTime(created)];
@@ -473,14 +390,21 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
 }
 - (void)compareBackup:(NSURL *)older with:(NSURL *)newer { NSError *error = nil; NSDictionary *result = [ATMAppModel.shared.backupManager compareBackup:older withBackup:newer error:&error]; if (!result) { ATMShowError(self, @"Comparison unavailable", error); return; } NSString *message = [NSString stringWithFormat:@"Added: %@\nRemoved: %@\nUpdated: %@\nUnchanged: %@", result[@"added"], result[@"removed"], result[@"updated"], result[@"unchanged"]]; UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Backup Changes" message:message preferredStyle:UIAlertControllerStyleAlert]; [alert addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleCancel handler:nil]]; [self presentViewController:alert animated:YES completion:nil]; }
 - (void)importBackup {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Import from Files" message:@"Open the backup in Files, tap Share, then choose Save to AAZ Tweak Manager. The Share Extension creates a private local copy before this app validates and imports it." preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+- (void)consumeNextPendingImport {
+    if (self.processingPendingImport || self.pendingImportURL || self.presentedViewController) return;
+    NSURL *url = ATMAppModel.shared.backupManager.pendingImportURLs.firstObject;
+    if (!url) return;
+    self.processingPendingImport = YES;
     ATMClearImportDiagnosticTrace();
-    ATMSetImportDiagnosticState(@"local-browser-opened", 0);
-    ATMBackupFinderController *finder = [ATMBackupFinderController new];
-    __weak typeof(self) weakSelf = self;
-    finder.selectionHandler = ^(NSURL *url) { [weakSelf beginImportFromURL:url]; };
-    [self.navigationController pushViewController:finder animated:YES];
+    ATMSetImportDiagnosticState(@"share-extension-received", 0);
+    [self beginImportFromURL:url];
 }
 - (void)beginImportFromURL:(NSURL *)url {
+    BOOL pendingSource = [ATMAppModel.shared.backupManager isPendingImportURL:url];
     BOOL accessStarted = [url startAccessingSecurityScopedResource];
     ATMRecordImportDiagnosticEvent(accessStarted ? @"security-scope-granted" : @"security-scope-not-required");
     UIAlertController *progress = [UIAlertController alertControllerWithTitle:@"Importing Backup" message:@"Preparing the selected file…" preferredStyle:UIAlertControllerStyleAlert];
@@ -488,9 +412,11 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         NSError *error = nil;
         NSURL *staged = [ATMAppModel.shared.backupManager stageImportFromURL:url error:&error];
+        if (staged && pendingSource) [ATMAppModel.shared.backupManager discardPendingImportAtURL:url];
         if (accessStarted) [url stopAccessingSecurityScopedResource];
         dispatch_async(dispatch_get_main_queue(), ^{
             [progress dismissViewControllerAnimated:YES completion:^{
+                self.processingPendingImport = NO;
                 if (!staged) { ATMShowError(self, @"Import could not start", error); return; }
                 self.pendingImportURL = staged;
                 if ([ATMAppModel.shared.backupManager isEncryptedBackup:staged]) [self promptForImportPasswordForURL:staged];
@@ -739,8 +665,8 @@ UIViewController *ATMCreateRootController(void) {
     return tabs;
 }
 
-BOOL ATMHandleBackupURL(UIViewController *rootController, NSURL *url) {
-    if (!url.isFileURL || ![rootController isKindOfClass:UITabBarController.class]) return NO;
+BOOL ATMHandlePendingImport(UIViewController *rootController) {
+    if (![rootController isKindOfClass:UITabBarController.class] || !ATMAppModel.shared.backupManager.pendingImportURLs.count) return NO;
     UITabBarController *tabs = (UITabBarController *)rootController;
     if (tabs.viewControllers.count < 2 || ![tabs.viewControllers[1] isKindOfClass:UINavigationController.class]) return NO;
     UINavigationController *navigation = (UINavigationController *)tabs.viewControllers[1];
@@ -749,7 +675,6 @@ BOOL ATMHandleBackupURL(UIViewController *rootController, NSURL *url) {
     tabs.selectedIndex = 1;
     [navigation popToRootViewControllerAnimated:NO];
     [backups loadViewIfNeeded];
-    ATMSetImportDiagnosticState(@"open-in-received", 0);
-    [backups beginImportFromURL:url];
+    dispatch_async(dispatch_get_main_queue(), ^{ [backups consumeNextPendingImport]; });
     return YES;
 }

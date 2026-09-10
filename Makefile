@@ -24,7 +24,16 @@ AAZTweakManager_RESOURCE_FILES = \
 	Resources/AppIcon60x60@2x.png \
 	Resources/AppIcon60x60@3x.png
 
+APPEX_NAME = AAZBackupImporter
+AAZBackupImporter_FILES = Extension/ShareViewController.m
+AAZBackupImporter_CFLAGS = -fobjc-arc -Wall -Wextra -fapplication-extension
+AAZBackupImporter_FRAMEWORKS = UIKit Foundation
+AAZBackupImporter_CODESIGN_FLAGS = -SExtension/AAZBackupImporter.entitlements
+AAZBackupImporter_INSTALL_PATH = /Applications/AAZTweakManager.app/PlugIns
+AAZBackupImporter_RESOURCE_DIRS = Extension/Resources
+
 include $(THEOS_MAKE_PATH)/application.mk
+include $(THEOS_MAKE_PATH)/appex.mk
 
 after-install::
 	install.exec "uicache -p /Applications/AAZTweakManager.app || true"
