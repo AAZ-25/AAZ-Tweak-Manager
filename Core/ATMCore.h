@@ -81,6 +81,7 @@ FOUNDATION_EXPORT NSURL * _Nullable ATMWriteDiagnosticReport(ATMEnvironment *env
 
 NSString *ATMISODateString(NSDate *date);
 NSString *ATMSHA256ForFile(NSURL *fileURL, NSError **error);
+NSSet<NSString *> *ATMProtectedPackageIDs(void);
 NSDictionary<NSString *, NSString *> *ATMParseDebianParagraph(NSString *paragraph);
 NSArray<NSDictionary<NSString *, NSString *> *> *ATMParseDebianParagraphs(NSString *contents);
 

@@ -12,6 +12,7 @@ AAZTweakManager_FILES = \
 	App/ATMViewControllers.m \
 	Core/ATMCore.m \
 	Core/ATMBackupManager.m \
+	Core/ATMRestorePlanner.m \
 	Core/ATMZipWriter.m
 AAZTweakManager_CFLAGS = -fobjc-arc -Wall -Wextra \
 	-I$(THEOS_PROJECT_DIR)/App \

@@ -19,7 +19,7 @@ case "$phase" in
   metadata)
     test -f "$deb"
     test "$(dpkg-deb -f "$deb" Package)" = "com.aaz.tweakmanager"
-    test "$(dpkg-deb -f "$deb" Version)" = "0.1.0~beta25"
+    test "$(dpkg-deb -f "$deb" Version)" = "0.1.0~beta26"
     test "$(dpkg-deb -f "$deb" Architecture)" = "iphoneos-arm64"
     dpkg-deb -c "$deb" > "$package_list"
     ;;
@@ -63,10 +63,10 @@ assert extension_entitlements == {
     "application-identifier": "com.aaz.tweakmanager.importer",
     "com.apple.security.application-groups": ["group.com.aaz.tweakmanager"],
 }
-assert app_info["CFBundleVersion"] == "25"
+assert app_info["CFBundleVersion"] == "26"
 assert "CFBundleDocumentTypes" not in app_info
 assert extension_info["CFBundleIdentifier"] == "com.aaz.tweakmanager.importer"
-assert extension_info["CFBundleVersion"] == "25"
+assert extension_info["CFBundleVersion"] == "26"
 definition = extension_info["NSExtension"]
 assert definition["NSExtensionPointIdentifier"] == "com.apple.share-services"
 assert definition["NSExtensionPrincipalClass"] == "AAZShareViewController"
@@ -91,6 +91,14 @@ PY
     grep -Fq 'Selection Updated' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'Encrypted Backup' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'Backup Health & Readiness' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'Check Restore Plan' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'Restore Readiness' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'Readiness Check Passed' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'Restore Needs Attention' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq -- '--simulate' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq -- '--no-remove' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq -- '--assume-no' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq -- '--no-install-recommends' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'Selection Profiles' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'Manage Profiles' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'Importing Backup' "$RUNNER_TEMP/aaz-app.strings"

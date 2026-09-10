@@ -160,7 +160,7 @@ static NSString *ATMReadGzipFile(NSString *path) {
     return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"";
 }
 
-static NSSet<NSString *> *ATMProtectedPackages(void) {
+NSSet<NSString *> *ATMProtectedPackageIDs(void) {
     return [NSSet setWithArray:@[@"apt", @"apt7", @"base", @"bash", @"coreutils", @"dash", @"debianutils", @"diffutils",
                                  @"dpkg", @"essential", @"firmware", @"grep", @"gzip", @"launchctl", @"libapt-pkg6.0",
                                  @"org.coolstar.sileo", @"org.coolstar.sileorespring", @"xyz.willy.zebra", @"jailbreak-resources",
@@ -235,7 +235,7 @@ static NSString *ATMSanitizeSourceText(NSString *text, BOOL *didRedact) {
     }
     NSDictionary *automatic = ATMAutomaticStates(self.environment.aptStatePath);
     NSDictionary *dates = ATMInstallDates(self.environment.dpkgLogPath);
-    NSSet *protected = ATMProtectedPackages();
+    NSSet *protected = ATMProtectedPackageIDs();
     NSMutableArray *records = [NSMutableArray array];
     for (NSDictionary *fields in ATMParseDebianParagraphs(statusText)) {
         if (!ATMStatusIsInstalled(fields[@"Status"] ?: @"")) continue;

@@ -10,7 +10,8 @@ required = [
     "Resources/AAZTweakManager.entitlements", "Resources/AppIcon60x60.png",
     "Resources/AppIcon60x60@2x.png", "Resources/AppIcon60x60@3x.png", "main.m",
     "App/ATMAppDelegate.m", "App/ATMViewControllers.m",
-    "Core/ATMCore.m", "Core/ATMBackupManager.m", "Core/ATMZipWriter.m",
+    "Core/ATMCore.m", "Core/ATMBackupManager.m", "Core/ATMRestorePlanner.h",
+    "Core/ATMRestorePlanner.m", "Core/ATMZipWriter.m",
     "Extension/ShareViewController.m", "Extension/Resources/Info.plist",
     "Extension/AAZBackupImporter.entitlements",
 ]
@@ -21,7 +22,7 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "25"
+assert info["CFBundleVersion"] == "26"
 assert info["LSSupportsOpeningDocumentsInPlace"] is False
 assert "CFBundleDocumentTypes" not in info
 
@@ -39,7 +40,7 @@ assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["Ap
 with (ROOT / "Extension/Resources/Info.plist").open("rb") as handle:
     extension_info = plistlib.load(handle)
 assert extension_info["CFBundleIdentifier"] == "com.aaz.tweakmanager.importer"
-assert extension_info["CFBundleVersion"] == "25"
+assert extension_info["CFBundleVersion"] == "26"
 assert extension_info["CFBundlePackageType"] == "XPC!"
 extension_definition = extension_info["NSExtension"]
 assert extension_definition["NSExtensionPointIdentifier"] == "com.apple.share-services"
@@ -57,7 +58,7 @@ assert extension_entitlements == {
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta25" in control
+assert "Version: 0.1.0~beta26" in control
 assert "Priority: optional" in control
 
 excluded_directories = {".git", ".theos-build", "packages"}
@@ -113,6 +114,11 @@ assert "passwords are never stored" in all_text.lower()
 assert "Import" in all_text
 assert "Only a healthy backup can be imported" in all_text
 assert "Backup Health & Readiness" in all_text
+assert "Check Restore Plan" in all_text
+assert "Restore Readiness" in all_text
+assert "Readiness Check Passed" in all_text
+assert "Restore Needs Attention" in all_text
+assert "Read-only result. Restore execution remains disabled in this beta." in all_text
 assert "Backup Changes" in all_text
 assert "Selection Profiles" in all_text
 assert "Manage Profiles" in all_text
@@ -137,6 +143,7 @@ assert "importDebugPrivacy=fixed-stage-labels-only" in all_text
 view_controller_text = (ROOT / "App/ATMViewControllers.m").read_text()
 extension_text = (ROOT / "Extension/ShareViewController.m").read_text()
 makefile_text = (ROOT / "Makefile").read_text()
+restore_planner_text = (ROOT / "Core/ATMRestorePlanner.m").read_text()
 assert "ATMBackupFinderController" not in view_controller_text
 assert "Find local backups without opening Files" not in view_controller_text
 assert "UIDocumentPickerViewController" not in view_controller_text
@@ -158,6 +165,25 @@ assert "AAZBackupImporter_INSTALL_PATH = /Applications/AAZTweakManager.app/PlugI
 assert "include $(THEOS_MAKE_PATH)/appex.mk" in makefile_text
 assert "AAZBackupImporter_RESOURCE_DIRS = Extension/Resources" in makefile_text
 assert "AAZBackupImporter_RESOURCE_FILES" not in makefile_text
+assert "Core/ATMRestorePlanner.m" in makefile_text
+for required_restore_guard in (
+    '@"--simulate"', '@"--no-remove"', '@"--assume-no"', '@"--no-install-recommends"',
+    '@"APT::Get::AllowUnauthenticated=false"',
+    '@"Acquire::AllowInsecureRepositories=false"',
+    '@"Debug::NoLocking=true"', '@"showhold"', '@"--compare-versions"', '@"/usr/bin/apt-cache"', '@"check"',
+    "ATMProtectedPackageIDs", '@"safeToExecute": @NO',
+):
+    assert required_restore_guard in restore_planner_text, f"missing restore guard: {required_restore_guard}"
+for forbidden_restore_behavior in (
+    '@"-y"', '@"--yes"', '@"--allow-downgrades"',
+    '@"--allow-remove-essential"', '@"--allow-change-held-packages"',
+    '@"--allow-unauthenticated"', '@"--force-yes"',
+):
+    assert forbidden_restore_behavior not in restore_planner_text, f"unsafe restore option: {forbidden_restore_behavior}"
+assert 'result[@"output"]' not in view_controller_text
+assert "No packages or sources were changed." in view_controller_text
+assert "ATMRestoreReadinessController" in view_controller_text
+assert "restorePreviewForBackup" not in all_text
 assert "share-extension-received" in all_text
 assert "pendingImportURLs" in all_text
 assert "In Files, Share → Save to AAZ Tweak Manager" in all_text
@@ -189,7 +215,7 @@ assert "[self beginPickerImportFromURL:url]" not in all_text
 assert "ATMHandlePendingImport" in all_text
 assert "for (NSUInteger index = 0; index < titles.count; index++)" in all_text
 assert "AAZTweakManager_FRAMEWORKS = UIKit Foundation Security" in (ROOT / "Makefile").read_text()
-assert "Restore preview" in all_text or "Restore Preview" in all_text
+assert "Restore Readiness" in all_text
 assert "The developer link opens externally" not in all_text
 assert '@"architecture": @"iphoneos-arm64"' in all_text
 assert '@"jailbreakPrefix"' not in (ROOT / "Core/ATMBackupManager.m").read_text()

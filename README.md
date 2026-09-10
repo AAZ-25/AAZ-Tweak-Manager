@@ -18,13 +18,14 @@ AAZ Tweak Manager is a rootless jailbreak app for reviewing and backing up packa
 - Presents a local activity timeline with readable package/backup events, date sections, filters, and safe history clearing.
 - Writes backups atomically through a private partial file, validates archive structure and CRC values, then exposes the final file only after success.
 - Inspects backup health, verifies cached-DEB SHA-256 hashes, and reports migration readiness using counts rather than public package identities.
+- Builds a read-only Restore Readiness plan that rejects malformed, held, essential, required, important, or protected bootstrap packages and runs APT only with simulation, no-removal, and assume-no safeguards.
 - Imports through a dedicated iOS Share Extension that materializes the selected Files item into a private shared container before the app performs protected staging and integrity validation. Duplicate archives are rejected.
 - Compares standard backups using Added, Removed, Updated, and Unchanged counts.
 - Supports reusable local selection profiles with a dedicated Load/Rename/Duplicate/Delete manager, plus backup search, size-aware sorting, and pinning.
 - Shows the installed Version and Build in Settings and keeps the empty History presentation centered and easy to read.
 - Optionally encrypts the complete archive with AES-256-CBC, PBKDF2-HMAC-SHA256 key derivation, and encrypt-then-MAC authentication. Passwords are never stored.
 
-The current beta intentionally does not install, remove, or restore packages. Restore execution will be added only after archive, compatibility, dependency, and transaction behavior are verified on a real jailbroken device.
+The current beta intentionally does not install, remove, or restore packages. It adds the device-testable Restore Readiness gate only. Actual execution remains disabled until the exact removal-free APT plan and privileged-helper boundary are verified on a real jailbroken device.
 
 ## Compatibility
 
@@ -58,7 +59,7 @@ The permanent GitHub workflow is manual-only and builds an artifact without publ
 
 ## Safety
 
-AAZ Tweak Manager never treats a successful build or archive creation as proof that restoration is safe. A future restore engine must verify the jailbreak scheme, bootstrap, architecture, iOS compatibility, source availability, exact package versions, hashes, conflicts, and dependencies before showing a separately confirmed transaction.
+AAZ Tweak Manager never treats a successful build, archive creation, or successful simulation as proof that restoration is safe. Restore Readiness verifies the Rootless target, package identifiers, architecture, protected/held state, exact requested versions, and a removal-free read-only APT simulation. A future separately confirmed helper must re-run the same checks immediately before any transaction.
 
 ## License
 

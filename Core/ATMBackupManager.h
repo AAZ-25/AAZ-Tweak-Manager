@@ -37,9 +37,9 @@ typedef NS_ENUM(NSInteger, ATMBackupErrorCode) {
 - (NSSet<NSString *> *)packageIDsForProfileNamed:(NSString *)name;
 - (BOOL)isBackupPinned:(NSURL *)backupURL;
 - (void)setBackup:(NSURL *)backupURL pinned:(BOOL)pinned;
-- (NSDictionary *)restorePreviewForBackup:(NSURL *)backupURL
-                        installedPackages:(NSArray<ATMPackageRecord *> *)installed
-                                    error:(NSError **)error;
+- (nullable NSDictionary *)restoreReadinessForManifest:(NSDictionary *)manifest
+                                      installedPackages:(NSArray<ATMPackageRecord *> *)installed
+                                                  error:(NSError **)error;
 @end
 
 NS_ASSUME_NONNULL_END

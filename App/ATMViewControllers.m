@@ -326,6 +326,69 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
 @end
 
 
+@interface ATMRestoreReadinessController : UITableViewController
+@property(nonatomic, copy) NSDictionary *plan;
+@property(nonatomic, copy) NSArray<NSDictionary *> *sections;
+- (instancetype)initWithPlan:(NSDictionary *)plan;
+@end
+
+@implementation ATMRestoreReadinessController
+- (instancetype)initWithPlan:(NSDictionary *)plan {
+    if ((self = [super initWithStyle:UITableViewStyleInsetGrouped])) _plan = [plan copy];
+    return self;
+}
+- (NSDictionary *)readinessItem:(NSString *)title value:(id)value symbol:(NSString *)symbol color:(UIColor *)color {
+    return @{ @"title": title, @"value": [value description] ?: @"0", @"symbol": symbol, @"color": color };
+}
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    BOOL passed = [self.plan[@"simulationPassed"] boolValue] && [self.plan[@"blocked"] unsignedIntegerValue] == 0;
+    self.title = passed ? @"Plan Ready" : @"Needs Attention";
+    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(closeReadiness)];
+    UIColor *good = UIColor.systemGreenColor, *warning = UIColor.systemOrangeColor, *neutral = UIColor.systemBlueColor;
+    self.sections = @[
+        @{ @"title": @"BACKUP", @"items": @[
+            [self readinessItem:@"Packages" value:self.plan[@"packageCount"] symbol:@"shippingbox.fill" color:neutral],
+            [self readinessItem:@"Already Exact" value:self.plan[@"alreadyInstalled"] symbol:@"checkmark.circle.fill" color:good],
+            [self readinessItem:@"Missing" value:self.plan[@"missing"] symbol:@"arrow.down.circle.fill" color:neutral],
+            [self readinessItem:@"Version Changes" value:self.plan[@"versionChanges"] symbol:@"arrow.triangle.2.circlepath" color:neutral]
+        ] },
+        @{ @"title": @"SAFETY GATES", @"items": @[
+            [self readinessItem:@"Protected or Invalid" value:self.plan[@"blocked"] symbol:@"shield.lefthalf.filled" color:[self.plan[@"blocked"] unsignedIntegerValue] ? warning : good],
+            [self readinessItem:@"Held" value:self.plan[@"held"] symbol:@"pause.circle.fill" color:[self.plan[@"held"] unsignedIntegerValue] ? warning : good],
+            [self readinessItem:@"Blocked Downgrades" value:self.plan[@"downgrades"] symbol:@"arrow.down.to.line.circle.fill" color:[self.plan[@"downgrades"] unsignedIntegerValue] ? warning : good],
+            [self readinessItem:@"Metadata Unavailable" value:self.plan[@"metadataUnavailable"] symbol:@"questionmark.circle.fill" color:[self.plan[@"metadataUnavailable"] unsignedIntegerValue] ? warning : good]
+        ] },
+        @{ @"title": @"READ-ONLY APT SIMULATION", @"items": @[
+            [self readinessItem:@"Result" value:passed ? @"Passed" : ([self.plan[@"simulationAttempted"] boolValue] ? @"Blocked" : @"Not Started") symbol:passed ? @"checkmark.shield.fill" : @"exclamationmark.shield.fill" color:passed ? good : warning],
+            [self readinessItem:@"Install Actions" value:self.plan[@"installActions"] symbol:@"plus.circle.fill" color:neutral],
+            [self readinessItem:@"Configure Actions" value:self.plan[@"configureActions"] symbol:@"gearshape.fill" color:neutral],
+            [self readinessItem:@"Removal Actions" value:self.plan[@"removalActions"] symbol:@"minus.circle.fill" color:[self.plan[@"removalActions"] unsignedIntegerValue] ? UIColor.systemRedColor : good]
+        ] }
+    ];
+    UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, self.tableView.bounds.size.width, 170)];
+    UIImageView *icon = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:passed ? @"checkmark.shield.fill" : @"exclamationmark.shield.fill"]];
+    icon.tintColor = passed ? good : warning; icon.contentMode = UIViewContentModeScaleAspectFit; icon.translatesAutoresizingMaskIntoConstraints = NO;
+    UILabel *headline = [UILabel new]; headline.text = passed ? @"Readiness Check Passed" : @"Restore Needs Attention"; headline.font = [UIFont preferredFontForTextStyle:UIFontTextStyleTitle2]; headline.textAlignment = NSTextAlignmentCenter; headline.adjustsFontForContentSizeCategory = YES; headline.translatesAutoresizingMaskIntoConstraints = NO;
+    UILabel *detail = [UILabel new]; detail.text = self.plan[@"reason"]; detail.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline]; detail.textColor = UIColor.secondaryLabelColor; detail.textAlignment = NSTextAlignmentCenter; detail.numberOfLines = 3; detail.adjustsFontForContentSizeCategory = YES; detail.translatesAutoresizingMaskIntoConstraints = NO;
+    [header addSubview:icon]; [header addSubview:headline]; [header addSubview:detail];
+    [NSLayoutConstraint activateConstraints:@[[icon.topAnchor constraintEqualToAnchor:header.topAnchor constant:14], [icon.centerXAnchor constraintEqualToAnchor:header.centerXAnchor], [icon.widthAnchor constraintEqualToConstant:44], [icon.heightAnchor constraintEqualToConstant:44], [headline.topAnchor constraintEqualToAnchor:icon.bottomAnchor constant:10], [headline.leadingAnchor constraintEqualToAnchor:header.leadingAnchor constant:20], [headline.trailingAnchor constraintEqualToAnchor:header.trailingAnchor constant:-20], [detail.topAnchor constraintEqualToAnchor:headline.bottomAnchor constant:6], [detail.leadingAnchor constraintEqualToAnchor:header.leadingAnchor constant:24], [detail.trailingAnchor constraintEqualToAnchor:header.trailingAnchor constant:-24]]];
+    self.tableView.tableHeaderView = header;
+}
+- (void)closeReadiness { [self dismissViewControllerAnimated:YES completion:nil]; }
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { (void)tableView; return self.sections.count; }
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { (void)tableView; return [self.sections[section][@"items"] count]; }
+- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section { (void)tableView; return self.sections[section][@"title"]; }
+- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section { (void)tableView; return (NSUInteger)section + 1 == self.sections.count ? @"Read-only result. Restore execution remains disabled in this beta. No packages or sources were changed." : nil; }
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"readiness"] ?: [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:@"readiness"];
+    NSDictionary *item = self.sections[indexPath.section][@"items"][indexPath.row];
+    cell.textLabel.text = item[@"title"]; cell.detailTextLabel.text = item[@"value"]; cell.imageView.image = [UIImage systemImageNamed:item[@"symbol"]]; cell.imageView.tintColor = item[@"color"]; cell.selectionStyle = UITableViewCellSelectionStyleNone;
+    return cell;
+}
+@end
+
+
 @interface ATMBackupsController : UITableViewController <UISearchResultsUpdating>
 @property(nonatomic, copy) NSArray<NSURL *> *allBackups;
 @property(nonatomic, copy) NSArray<NSURL *> *backups;
@@ -386,7 +449,25 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
     NSString *cachedSize = [NSByteCountFormatter stringFromByteCount:[report[@"cachedBytes"] longLongValue] countStyle:NSByteCountFormatterCountStyleFile], *archiveSize = [NSByteCountFormatter stringFromByteCount:[report[@"fileSize"] longLongValue] countStyle:NSByteCountFormatterCountStyleFile], *freeSize = [NSByteCountFormatter stringFromByteCount:[report[@"availableBytes"] longLongValue] countStyle:NSByteCountFormatterCountStyleFile];
     NSString *message = [NSString stringWithFormat:@"Health: %@\nProtection: %@\nArchive: %@ • Free storage: %@\nPackages: %@ • Sources: %@\nExact cached DEBs: %@ (%@)\n\nMigration readiness\nReady now: %lu\nMissing: %lu\nDifferent version: %lu\nPayload unavailable: %lu\n\nNo changes are made.", report[@"health"], [report[@"encrypted"] boolValue] ? @"Encrypted" : @"Standard", archiveSize, freeSize, report[@"packageCount"], report[@"sourceCount"], report[@"cachedDEBCount"], cachedSize, (unsigned long)ready, (unsigned long)missing, (unsigned long)different, (unsigned long)unavailable];
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Backup Health & Readiness" message:message preferredStyle:UIAlertControllerStyleAlert]; [alert addAction:[UIAlertAction actionWithTitle:@"Close" style:UIAlertActionStyleCancel handler:nil]]; [alert addAction:[UIAlertAction actionWithTitle:@"Share" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) { [self shareURL:url]; }]];
+    if ([report[@"health"] isEqualToString:@"Healthy"]) [alert addAction:[UIAlertAction actionWithTitle:@"Check Restore Plan" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) { [self checkRestorePlanForManifest:manifest]; }]];
     NSUInteger index = [self.backups indexOfObject:url]; if (![report[@"encrypted"] boolValue] && index != NSNotFound && index + 1 < self.backups.count && ![ATMAppModel.shared.backupManager isEncryptedBackup:self.backups[index + 1]]) [alert addAction:[UIAlertAction actionWithTitle:@"Compare with Next" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) { [self compareBackup:self.backups[index + 1] with:url]; }]]; [self presentViewController:alert animated:YES completion:nil];
+}
+- (void)checkRestorePlanForManifest:(NSDictionary *)manifest {
+    UIAlertController *progress = [UIAlertController alertControllerWithTitle:@"Checking Restore Plan" message:@"Running package, protection, hold, and read-only APT simulation checks…" preferredStyle:UIAlertControllerStyleAlert];
+    [self presentViewController:progress animated:YES completion:nil];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSError *error = nil;
+        NSDictionary *plan = [ATMAppModel.shared.backupManager restoreReadinessForManifest:manifest installedPackages:ATMAppModel.shared.packages error:&error];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [progress dismissViewControllerAnimated:YES completion:^{
+                if (!plan) { ATMShowError(self, @"Restore plan unavailable", error); return; }
+                ATMRestoreReadinessController *result = [[ATMRestoreReadinessController alloc] initWithPlan:plan];
+                UINavigationController *navigation = [[UINavigationController alloc] initWithRootViewController:result];
+                navigation.modalPresentationStyle = UIModalPresentationFormSheet;
+                [self presentViewController:navigation animated:YES completion:nil];
+            }];
+        });
+    });
 }
 - (void)compareBackup:(NSURL *)older with:(NSURL *)newer { NSError *error = nil; NSDictionary *result = [ATMAppModel.shared.backupManager compareBackup:older withBackup:newer error:&error]; if (!result) { ATMShowError(self, @"Comparison unavailable", error); return; } NSString *message = [NSString stringWithFormat:@"Added: %@\nRemoved: %@\nUpdated: %@\nUnchanged: %@", result[@"added"], result[@"removed"], result[@"updated"], result[@"unchanged"]]; UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Backup Changes" message:message preferredStyle:UIAlertControllerStyleAlert]; [alert addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleCancel handler:nil]]; [self presentViewController:alert animated:YES completion:nil]; }
 - (void)importBackup {
@@ -608,8 +689,8 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
         cell.textLabel.text = @"Manage Selection Profiles"; cell.detailTextLabel.text = [NSString stringWithFormat:@"%lu saved profile%@", (unsigned long)count, count == 1 ? @"" : @"s"];
         cell.imageView.image = [UIImage systemImageNamed:@"person.crop.square"]; cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator; cell.selectionStyle = UITableViewCellSelectionStyleDefault;
     } else if (indexPath.section == 2) {
-        NSArray *titles = @[@"Rootless", @"Credentials Excluded", @"Restore Preview"];
-        NSArray *details = @[@"Uses the Rootless package database.", @"Passwords and repository credentials are excluded.", @"Reviews backups without changing packages or sources."];
+        NSArray *titles = @[@"Rootless", @"Credentials Excluded", @"Restore Readiness"];
+        NSArray *details = @[@"Uses the Rootless package database.", @"Passwords and repository credentials are excluded.", @"Checks a removal-free APT plan without changing packages or sources."];
         cell.textLabel.text = titles[indexPath.row]; cell.detailTextLabel.text = details[indexPath.row]; cell.detailTextLabel.numberOfLines = 2; cell.imageView.image = [UIImage systemImageNamed:@"checkmark.shield"];
     } else if (indexPath.section == 3 && indexPath.row == 0) {
         cell.textLabel.text = @"Detailed Import Diagnostics";
