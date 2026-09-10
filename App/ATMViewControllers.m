@@ -549,7 +549,7 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
 - (void)presentBackupReport:(NSDictionary *)report forURL:(NSURL *)url {
     NSDictionary *manifest = report[@"manifest"]; NSMutableDictionary *installed = [NSMutableDictionary dictionary]; for (ATMPackageRecord *record in ATMAppModel.shared.packages) installed[record.packageID] = record.version;
     NSUInteger ready = 0, missing = 0, different = 0, unavailable = 0; for (NSDictionary *package in manifest[@"packages"]) { NSString *current = installed[package[@"packageID"] ?: @""]; if (!current) missing++; else if (![current isEqualToString:package[@"version"] ?: @""]) different++; else ready++; if ([package[@"debStatus"] isEqualToString:@"unavailable"]) unavailable++; }
-    NSUInteger index = [self.backups indexOfObject:url]; NSURL *comparisonURL = (![report[@"encrypted"] boolValue] && index != NSNotFound && index + 1 < self.backups.count && ![ATMAppModel.shared.backupManager isEncryptedBackup:self.backups[index + 1])) ? self.backups[index + 1] : nil;
+    NSUInteger index = [self.backups indexOfObject:url]; NSURL *comparisonURL = (![report[@"encrypted"] boolValue] && index != NSNotFound && index + 1 < self.backups.count && ![ATMAppModel.shared.backupManager isEncryptedBackup:self.backups[index + 1]]) ? self.backups[index + 1] : nil;
     ATMBackupDetailsController *details = [[ATMBackupDetailsController alloc] initWithReport:report ready:ready missing:missing different:different unavailable:unavailable];
     __weak typeof(self) weakSelf = self; __weak ATMBackupDetailsController *weakDetails = details;
     details.shareHandler = ^{ [weakSelf shareURL:url]; };
