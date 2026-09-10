@@ -6,8 +6,17 @@
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
     (void)application;
     (void)launchOptions;
+    UIColor *accent = [UIColor colorWithRed:0.08 green:0.43 blue:0.94 alpha:1.0];
+    UINavigationBarAppearance *navigationAppearance = [UINavigationBarAppearance new];
+    [navigationAppearance configureWithDefaultBackground];
+    UINavigationBar.appearance.standardAppearance = navigationAppearance;
+    UINavigationBar.appearance.scrollEdgeAppearance = navigationAppearance;
+    UITabBarAppearance *tabAppearance = [UITabBarAppearance new];
+    [tabAppearance configureWithDefaultBackground];
+    UITabBar.appearance.standardAppearance = tabAppearance;
+    UITabBar.appearance.scrollEdgeAppearance = tabAppearance;
     self.window = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
-    self.window.tintColor = [UIColor colorWithRed:0.12 green:0.48 blue:0.95 alpha:1.0];
+    self.window.tintColor = accent;
     self.window.rootViewController = ATMCreateRootController();
     [self.window makeKeyAndVisible];
     return YES;

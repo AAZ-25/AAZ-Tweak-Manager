@@ -22,7 +22,7 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "26"
+assert info["CFBundleVersion"] == "27"
 assert info["LSSupportsOpeningDocumentsInPlace"] is False
 assert "CFBundleDocumentTypes" not in info
 
@@ -40,7 +40,7 @@ assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["Ap
 with (ROOT / "Extension/Resources/Info.plist").open("rb") as handle:
     extension_info = plistlib.load(handle)
 assert extension_info["CFBundleIdentifier"] == "com.aaz.tweakmanager.importer"
-assert extension_info["CFBundleVersion"] == "26"
+assert extension_info["CFBundleVersion"] == "27"
 assert extension_info["CFBundlePackageType"] == "XPC!"
 extension_definition = extension_info["NSExtension"]
 assert extension_definition["NSExtensionPointIdentifier"] == "com.apple.share-services"
@@ -58,7 +58,7 @@ assert extension_entitlements == {
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta26" in control
+assert "Version: 0.1.0~beta27" in control
 assert "Priority: optional" in control
 
 excluded_directories = {".git", ".theos-build", "packages"}
@@ -89,7 +89,7 @@ assert 'record.essential = essentialValue.length > 0 &&' in all_text
 assert 'record.essential = [fields[@"Essential"]' not in all_text
 assert "privacy=counts-and-stage-flags-only" in all_text
 assert "AAZ-Tweak-Manager-Diagnostic.txt" in all_text
-assert "fixed stage labels only" in all_text
+assert "fixed-stage-labels-only" in all_text
 assert "Select All" in all_text
 assert "Unselect All" in all_text
 assert "Search packages" in all_text
@@ -101,7 +101,7 @@ assert "Selection Updated" in all_text
 assert "No Activity Yet" in all_text
 assert "Clear History?" in all_text
 assert "clearHistory" in all_text
-assert "No changes are made" in all_text
+assert "No packages or sources are changed" in all_text
 assert 'cell.textLabel.text = item[@"event"]' not in all_text
 assert '@"cachedDEBCount"' in all_text
 assert "ATMValidateStoredZipArchive" in all_text
@@ -113,7 +113,10 @@ assert "SecRandomCopyBytes" in all_text
 assert "passwords are never stored" in all_text.lower()
 assert "Import" in all_text
 assert "Only a healthy backup can be imported" in all_text
-assert "Backup Health & Readiness" in all_text
+assert "Backup Details" in all_text
+assert "Backup Verified" in all_text
+assert "ATMBackupDetailsController" in all_text
+assert "Backup Health & Readiness" not in all_text
 assert "Check Restore Plan" in all_text
 assert "Restore Readiness" in all_text
 assert "Readiness Check Passed" in all_text
@@ -134,7 +137,7 @@ assert "Import Backup" in all_text
 assert "numberOfSectionsInTableView" in all_text
 assert "if (indexPath.section == 0) { [self importBackup]; return; }" in all_text
 assert "tableHeaderView = importHeader" not in all_text
-assert "Detailed Import Diagnostics" in all_text
+assert "Import Troubleshooting" in all_text
 assert "ATMImportDiagnosticsEnabled" in all_text
 assert "ATMImportDiagnosticStageAllowed" in all_text
 assert "importDebugEnabled=%@" in all_text
