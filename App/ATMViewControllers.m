@@ -361,21 +361,22 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
     self.sections = @[
         @{ @"title": @"BACKUP", @"items": @[
             [self readinessItem:@"Packages" value:self.plan[@"packageCount"] symbol:@"shippingbox.fill" color:neutral],
-            [self readinessItem:@"Already Exact" value:self.plan[@"alreadyInstalled"] symbol:@"checkmark.circle.fill" color:good],
+            [self readinessItem:@"Exact Version" value:self.plan[@"alreadyInstalled"] symbol:@"checkmark.circle.fill" color:good],
             [self readinessItem:@"Missing" value:self.plan[@"missing"] symbol:@"arrow.down.circle.fill" color:neutral],
-            [self readinessItem:@"Version Changes" value:self.plan[@"versionChanges"] symbol:@"arrow.triangle.2.circlepath" color:neutral]
+            [self readinessItem:@"Version Updates" value:self.plan[@"updatesNeeded"] symbol:@"arrow.up.circle.fill" color:neutral],
+            [self readinessItem:@"Newer Versions Kept" value:self.plan[@"newerVersionsKept"] symbol:@"arrow.up.right.circle.fill" color:good]
         ] },
         @{ @"title": @"SAFETY GATES", @"items": @[
-            [self readinessItem:@"Protected or Invalid" value:self.plan[@"blocked"] symbol:@"shield.lefthalf.filled" color:[self.plan[@"blocked"] unsignedIntegerValue] ? warning : good],
+            [self readinessItem:@"Protected or Invalid" value:self.plan[@"protectedOrInvalid"] symbol:@"shield.lefthalf.filled" color:[self.plan[@"protectedOrInvalid"] unsignedIntegerValue] ? warning : good],
             [self readinessItem:@"Held" value:self.plan[@"held"] symbol:@"pause.circle.fill" color:[self.plan[@"held"] unsignedIntegerValue] ? warning : good],
-            [self readinessItem:@"Blocked Downgrades" value:self.plan[@"downgrades"] symbol:@"arrow.down.to.line.circle.fill" color:[self.plan[@"downgrades"] unsignedIntegerValue] ? warning : good],
-            [self readinessItem:@"Metadata Unavailable" value:self.plan[@"metadataUnavailable"] symbol:@"questionmark.circle.fill" color:[self.plan[@"metadataUnavailable"] unsignedIntegerValue] ? warning : good]
+            [self readinessItem:@"Metadata Unavailable" value:self.plan[@"metadataUnavailable"] symbol:@"questionmark.circle.fill" color:[self.plan[@"metadataUnavailable"] unsignedIntegerValue] ? warning : good],
+            [self readinessItem:@"Checks Unavailable" value:self.plan[@"prerequisiteFailures"] symbol:@"wrench.and.screwdriver.fill" color:[self.plan[@"prerequisiteFailures"] unsignedIntegerValue] ? warning : good]
         ] },
-        @{ @"title": @"READ-ONLY APT SIMULATION", @"items": @[
+        @{ @"title": @"RESTORE PREVIEW", @"items": @[
             [self readinessItem:@"Result" value:passed ? @"Passed" : ([self.plan[@"simulationAttempted"] boolValue] ? @"Blocked" : @"Not Started") symbol:passed ? @"checkmark.shield.fill" : @"exclamationmark.shield.fill" color:passed ? good : warning],
-            [self readinessItem:@"Install Actions" value:self.plan[@"installActions"] symbol:@"plus.circle.fill" color:neutral],
-            [self readinessItem:@"Configure Actions" value:self.plan[@"configureActions"] symbol:@"gearshape.fill" color:neutral],
-            [self readinessItem:@"Removal Actions" value:self.plan[@"removalActions"] symbol:@"minus.circle.fill" color:[self.plan[@"removalActions"] unsignedIntegerValue] ? UIColor.systemRedColor : good]
+            [self readinessItem:@"Packages to Install" value:self.plan[@"installActions"] symbol:@"plus.circle.fill" color:neutral],
+            [self readinessItem:@"Packages to Configure" value:self.plan[@"configureActions"] symbol:@"gearshape.fill" color:neutral],
+            [self readinessItem:@"Packages to Remove" value:self.plan[@"removalActions"] symbol:@"minus.circle.fill" color:[self.plan[@"removalActions"] unsignedIntegerValue] ? UIColor.systemRedColor : good]
         ] }
     ];
     UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, self.tableView.bounds.size.width, 170)];
@@ -391,7 +392,7 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { (void)tableView; return self.sections.count; }
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { (void)tableView; return [self.sections[section][@"items"] count]; }
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section { (void)tableView; return self.sections[section][@"title"]; }
-- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section { (void)tableView; return (NSUInteger)section + 1 == self.sections.count ? @"Read-only result. Restore execution remains disabled in this beta. No packages or sources were changed." : nil; }
+- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section { (void)tableView; return (NSUInteger)section + 1 == self.sections.count ? @"Preview only. No packages or sources were changed." : nil; }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"readiness"] ?: [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:@"readiness"];
     NSDictionary *item = self.sections[indexPath.section][@"items"][indexPath.row];
@@ -476,7 +477,7 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
         UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"backup-action"] ?: [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:@"backup-action"];
         BOOL healthy = [self.report[@"health"] isEqualToString:@"Healthy"]; BOOL planRow = indexPath.row == 0;
         cell.textLabel.text = planRow ? (healthy ? @"Check Restore Plan" : @"Restore Check Unavailable") : @"Compare with Next Backup";
-        cell.detailTextLabel.text = planRow ? (healthy ? @"Run protected, held-package, version, and APT simulation checks." : @"Only a healthy, verified backup can be checked.") : @"See aggregate changes between these backups.";
+        cell.detailTextLabel.text = planRow ? (healthy ? @"Check versions, protections, holds, and package-manager safety." : @"Only a healthy, verified backup can be checked.") : @"See aggregate changes between these backups.";
         cell.detailTextLabel.numberOfLines = 2; cell.imageView.image = [UIImage systemImageNamed:planRow ? (healthy ? @"checkmark.shield" : @"exclamationmark.shield") : @"arrow.left.arrow.right"];
         cell.imageView.tintColor = planRow ? (healthy ? UIColor.systemBlueColor : UIColor.systemOrangeColor) : UIColor.secondaryLabelColor; cell.accessoryType = (planRow && !healthy) ? UITableViewCellAccessoryNone : UITableViewCellAccessoryDisclosureIndicator; cell.selectionStyle = (planRow && !healthy) ? UITableViewCellSelectionStyleNone : UITableViewCellSelectionStyleDefault; return cell;
     }
@@ -558,7 +559,7 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
     UINavigationController *navigation = [[UINavigationController alloc] initWithRootViewController:details]; navigation.modalPresentationStyle = UIModalPresentationFormSheet; [self presentViewController:navigation animated:YES completion:nil];
 }
 - (void)checkRestorePlanForManifest:(NSDictionary *)manifest {
-    UIAlertController *progress = [UIAlertController alertControllerWithTitle:@"Checking Restore Plan" message:@"Running package, protection, hold, and read-only APT simulation checks…" preferredStyle:UIAlertControllerStyleAlert];
+    UIAlertController *progress = [UIAlertController alertControllerWithTitle:@"Checking Restore Plan" message:@"Checking versions, protections, holds, and package-manager safety…" preferredStyle:UIAlertControllerStyleAlert];
     [self presentViewController:progress animated:YES completion:nil];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         NSError *error = nil;

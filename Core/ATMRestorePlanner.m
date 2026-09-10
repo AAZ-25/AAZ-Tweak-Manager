@@ -99,9 +99,9 @@ static NSDictionary *ATMRestoreHeldPackages(ATMEnvironment *environment) {
     NSString *dpkg = ATMRestoreExecutable(self.environment, @[@"/usr/bin/dpkg", @"/bin/dpkg"]);
     NSString *aptCache = ATMRestoreExecutable(self.environment, @[@"/usr/bin/apt-cache", @"/bin/apt-cache"]);
     NSMutableArray<NSString *> *requests = [NSMutableArray array];
-    NSUInteger alreadyInstalled = 0, missing = 0, versionChanges = 0, downgrades = 0, payloads = 0, unavailablePayloads = 0, heldCount = 0, metadataUnavailable = 0, blockedCount = 0;
+    NSUInteger alreadyInstalled = 0, missing = 0, versionChanges = 0, updatesNeeded = 0, newerVersionsKept = 0, payloads = 0, unavailablePayloads = 0, heldCount = 0, metadataUnavailable = 0, protectedOrInvalid = 0, prerequisiteFailures = 0, blockedCount = 0;
     for (id object in packages) {
-        if (![object isKindOfClass:NSDictionary.class]) { blockedCount++; continue; }
+        if (![object isKindOfClass:NSDictionary.class]) { protectedOrInvalid++; blockedCount++; continue; }
         NSDictionary *package = object;
         NSString *packageID = package[@"packageID"], *version = package[@"version"];
         NSString *architecture = [package[@"architecture"] isKindOfClass:NSString.class] ? package[@"architecture"] : @"";
@@ -110,16 +110,17 @@ static NSDictionary *ATMRestoreHeldPackages(ATMEnvironment *environment) {
             (![architecture isEqualToString:@"iphoneos-arm64"] && ![architecture isEqualToString:@"all"]) ||
             [package[@"essential"] boolValue] || [@[@"required", @"important"] containsObject:priority] ||
             [protected containsObject:packageID.lowercaseString];
-        if (invalid) { blockedCount++; continue; }
+        if (invalid) { protectedOrInvalid++; blockedCount++; continue; }
         ATMPackageRecord *current = installedByID[packageID];
         if (current && [current.version isEqualToString:version]) { alreadyInstalled++; continue; }
         if (current) {
             versionChanges++;
-            if (!dpkg.length) { blockedCount++; continue; }
+            if (!dpkg.length) { prerequisiteFailures++; blockedCount++; continue; }
             NSDictionary *comparison = ATMRestoreRun(dpkg, @[@"--compare-versions", current.version ?: @"", @"gt", version]);
             NSInteger comparisonCode = [comparison[@"exitCode"] integerValue];
-            if (comparisonCode == 0) { downgrades++; blockedCount++; continue; }
-            if (comparisonCode != 1) { blockedCount++; continue; }
+            if (comparisonCode == 0) { newerVersionsKept++; continue; }
+            if (comparisonCode != 1) { prerequisiteFailures++; blockedCount++; continue; }
+            updatesNeeded++;
         } else missing++;
         if ([held containsObject:packageID]) { heldCount++; blockedCount++; continue; }
         if ([package[@"debStatus"] isEqualToString:@"exact-cache"] && [package[@"sha256"] isKindOfClass:NSString.class] && [package[@"sha256"] length] == 64) payloads++; else unavailablePayloads++;
@@ -139,10 +140,10 @@ static NSDictionary *ATMRestoreHeldPackages(ATMEnvironment *environment) {
         BOOL metadataProtected = [metadataEssential isEqualToString:@"yes"] ||
             [@[@"required", @"important"] containsObject:metadataPriority] || [protected containsObject:metadataPackage.lowercaseString];
         if (!metadataValid) { metadataUnavailable++; blockedCount++; continue; }
-        if (metadataProtected) { blockedCount++; continue; }
+        if (metadataProtected) { protectedOrInvalid++; blockedCount++; continue; }
         [requests addObject:request];
     }
-    if (![holdCheck[@"success"] boolValue]) blockedCount++;
+    if (![holdCheck[@"success"] boolValue]) { prerequisiteFailures++; blockedCount++; }
     NSString *aptGet = ATMRestoreExecutable(self.environment, @[@"/usr/bin/apt-get", @"/bin/apt-get"]);
     BOOL attempted = aptGet.length && blockedCount == 0;
     __block NSUInteger installActions = 0, configureActions = 0, removalActions = 0, errorLines = 0;
@@ -163,14 +164,15 @@ static NSDictionary *ATMRestoreHeldPackages(ATMEnvironment *environment) {
     BOOL simulationPassed = attempted && exitCode == 0 && removalActions == 0 && errorLines == 0;
     BOOL alreadySatisfied = requests.count == 0 && blockedCount == 0;
     NSString *reason = ![holdCheck[@"success"] boolValue] ? @"The held-package safety check could not be completed." :
-        (blockedCount ? @"Protected, held, invalid, or downgrade package entries must be resolved before Restore." :
-        (!aptGet.length ? @"The Rootless APT simulation tool is unavailable." :
-        (!simulationPassed ? @"APT could not produce a removal-free transaction plan." :
-        (alreadySatisfied ? @"All backup package versions are installed and the read-only APT simulation passed." :
-        @"The read-only APT simulation completed without removals. Restore execution is still disabled."))));
-    return @{ @"packageCount": @(packages.count), @"alreadyInstalled": @(alreadyInstalled), @"missing": @(missing), @"versionChanges": @(versionChanges), @"downgrades": @(downgrades),
+        (blockedCount ? @"Resolve the listed safety checks before Restore." :
+        (!aptGet.length ? @"The package-manager safety check is unavailable." :
+        (!simulationPassed ? @"The package manager could not produce a safe, removal-free plan." :
+        (alreadySatisfied && newerVersionsKept ? @"All required packages are installed. Newer installed versions will be kept." :
+        (alreadySatisfied ? @"All backup package versions are installed and the safety check passed." :
+        @"The restore preview completed safely without removals.")))));
+    return @{ @"packageCount": @(packages.count), @"alreadyInstalled": @(alreadyInstalled), @"missing": @(missing), @"versionChanges": @(versionChanges), @"updatesNeeded": @(updatesNeeded), @"newerVersionsKept": @(newerVersionsKept),
               @"exactPayloads": @(payloads), @"payloadUnavailable": @(unavailablePayloads), @"held": @(heldCount), @"blocked": @(blockedCount),
-              @"metadataUnavailable": @(metadataUnavailable),
+              @"protectedOrInvalid": @(protectedOrInvalid), @"metadataUnavailable": @(metadataUnavailable), @"prerequisiteFailures": @(prerequisiteFailures),
               @"holdCheckPassed": holdCheck[@"success"],
               @"simulationAttempted": @(attempted), @"simulationPassed": @(simulationPassed), @"aptExitCode": @(exitCode),
               @"installActions": @(installActions), @"configureActions": @(configureActions), @"removalActions": @(removalActions),
