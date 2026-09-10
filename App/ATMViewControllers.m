@@ -38,6 +38,22 @@ static BOOL ATMInstallDocumentPickerHostIdentityFix(void) {
     return installed;
 }
 
+static BOOL ATMVerifyApplicationDataContainer(void) {
+    NSString *home = NSHomeDirectory().stringByStandardizingPath;
+    if (![home containsString:@"/Containers/Data/Application/"]) return NO;
+    NSURL *documents = [NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
+    if (!documents) return NO;
+    NSError *directoryError = nil;
+    if (![NSFileManager.defaultManager createDirectoryAtURL:documents withIntermediateDirectories:YES attributes:nil error:&directoryError]) return NO;
+    NSURL *probe = [documents URLByAppendingPathComponent:[NSString stringWithFormat:@".%@.container-probe", NSUUID.UUID.UUIDString]];
+    NSData *expected = [@"AAZ" dataUsingEncoding:NSUTF8StringEncoding];
+    NSError *writeError = nil;
+    BOOL written = [expected writeToURL:probe options:NSDataWritingAtomic error:&writeError];
+    NSData *actual = written ? [NSData dataWithContentsOfURL:probe] : nil;
+    [NSFileManager.defaultManager removeItemAtURL:probe error:nil];
+    return written && [actual isEqualToData:expected];
+}
+
 @interface ATMAppModel : NSObject
 @property(nonatomic, strong) ATMEnvironment *environment;
 @property(nonatomic, strong) ATMPackageScanner *scanner;
@@ -365,7 +381,6 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
 @property(nonatomic, assign) NSInteger sortMode;
 @property(nonatomic, strong, nullable) NSURL *pendingImportURL;
 @property(nonatomic, strong, nullable) UIDocumentPickerViewController *importPicker;
-- (void)beginPickerImportFromURL:(NSURL *)url;
 - (void)beginImportFromURL:(NSURL *)url;
 @end
 
@@ -423,6 +438,12 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
 - (void)importBackup {
     ATMClearImportDiagnosticTrace();
     ATMSetImportDiagnosticState(@"picker-requested", 0);
+    if (!ATMVerifyApplicationDataContainer()) {
+        ATMSetImportDiagnosticState(@"container-unavailable", 66);
+        ATMShowError(self, @"Import unavailable", [NSError errorWithDomain:@"ATM" code:66 userInfo:@{NSLocalizedDescriptionKey: @"The application data container is unavailable. Reinstall this build, then try again."}]);
+        return;
+    }
+    ATMRecordImportDiagnosticEvent(@"container-ready");
     if (!ATMInstallDocumentPickerHostIdentityFix()) {
         ATMSetImportDiagnosticState(@"picker-host-identity-unavailable", 65);
         ATMShowError(self, @"Import unavailable", [NSError errorWithDomain:@"ATM" code:65 userInfo:@{NSLocalizedDescriptionKey: @"Files identity support is unavailable on this iOS build."}]);
@@ -441,8 +462,8 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
         if (type) [types addObject:type];
     }
     if (!types.count) { ATMSetImportDiagnosticState(@"picker-create-failed", 6); ATMShowError(self, @"Import unavailable", [NSError errorWithDomain:@"ATM" code:6 userInfo:@{NSLocalizedDescriptionKey: @"Files is unavailable."}]); return; }
-    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:types];
-    ATMRecordImportDiagnosticEvent(@"picker-open-mode-created");
+    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:types asCopy:YES];
+    ATMRecordImportDiagnosticEvent(@"picker-copy-mode-created");
     picker.delegate = self;
     picker.allowsMultipleSelection = NO;
     picker.presentationController.delegate = self; self.importPicker = picker;
@@ -457,7 +478,7 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
     controller.delegate = nil; self.importPicker = nil;
     if (!url) { ATMSetImportDiagnosticState(@"no-selection", 51); return; }
     ATMSetImportDiagnosticState(@"file-selected", 0);
-    [self beginPickerImportFromURL:url];
+    [self beginImportFromURL:url];
 }
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
     ATMRecordImportDiagnosticEvent(@"picker-callback-multiple");
@@ -472,20 +493,6 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentAtURL:(NSURL *)url {
     ATMRecordImportDiagnosticEvent(@"picker-callback-single");
     [self handlePickedDocumentURL:url controller:controller];
-}
-- (void)beginPickerImportFromURL:(NSURL *)url {
-    UIAlertController *progress = [UIAlertController alertControllerWithTitle:@"Importing Backup" message:@"Preparing the selected file…" preferredStyle:UIAlertControllerStyleAlert];
-    [self presentViewController:progress animated:YES completion:nil];
-    [ATMAppModel.shared.backupManager stageImportDocumentAtURL:url completion:^(NSURL *staged, NSError *error) {
-        dispatch_async(dispatch_get_main_queue(), ^{
-            [progress dismissViewControllerAnimated:YES completion:^{
-                if (!staged) { ATMShowError(self, @"Import could not start", error); return; }
-                self.pendingImportURL = staged;
-                if ([ATMAppModel.shared.backupManager isEncryptedBackup:staged]) [self promptForImportPasswordForURL:staged];
-                else [self performImport:staged password:nil];
-            }];
-        });
-    }];
 }
 - (void)beginImportFromURL:(NSURL *)url {
     BOOL accessStarted = [url startAccessingSecurityScopedResource];

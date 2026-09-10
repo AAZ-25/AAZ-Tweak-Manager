@@ -38,7 +38,7 @@ jobs:
           DEB="$(find packages -name '*.deb' -type f | head -n 1)"
           test -n "$DEB"
           test "$(dpkg-deb -f "$DEB" Package)" = "com.aaz.tweakmanager"
-          test "$(dpkg-deb -f "$DEB" Version)" = "0.1.0~beta22"
+          test "$(dpkg-deb -f "$DEB" Version)" = "0.1.0~beta23"
           test "$(dpkg-deb -f "$DEB" Architecture)" = "iphoneos-arm64"
           dpkg-deb -c "$DEB" > "$RUNNER_TEMP/aaz-package.list"
           grep -Fq 'AAZTweakManager.app/AAZTweakManager' "$RUNNER_TEMP/aaz-package.list"
@@ -46,9 +46,18 @@ jobs:
           dpkg-deb -x "$DEB" "$RUNNER_TEMP/aaz-package"
           APP="$RUNNER_TEMP/aaz-package/var/jb/Applications/AAZTweakManager.app/AAZTweakManager"
           ldid -e "$APP" > "$RUNNER_TEMP/aaz-app.entitlements"
-          grep -Fq "<key>platform-application</key>" "$RUNNER_TEMP/aaz-app.entitlements"
-          grep -Fq "<key>application-identifier</key>" "$RUNNER_TEMP/aaz-app.entitlements"
-          grep -Fq "<string>com.aaz.tweakmanager</string>" "$RUNNER_TEMP/aaz-app.entitlements"
+          python3 - "$RUNNER_TEMP/aaz-app.entitlements" <<'PY'
+          import plistlib
+          import sys
+          with open(sys.argv[1], "rb") as handle:
+              entitlements = plistlib.load(handle)
+          assert entitlements["platform-application"] is True
+          assert entitlements["application-identifier"] == "com.aaz.tweakmanager"
+          assert entitlements["com.apple.private.security.no-sandbox"] is True
+          assert entitlements["com.apple.private.security.storage.AppBundles"] is True
+          assert entitlements["com.apple.private.security.storage.AppDataContainers"] is True
+          assert "com.apple.private.security.no-container" not in entitlements
+          PY
           file "$APP" > "$RUNNER_TEMP/aaz-app.file"
           grep -Fq 'arm64' "$RUNNER_TEMP/aaz-app.file"
           strings "$RUNNER_TEMP/aaz-package/var/jb/Applications/AAZTweakManager.app/AAZTweakManager" > "$RUNNER_TEMP/aaz-app.strings"
@@ -64,6 +73,9 @@ jobs:
           grep -Fq 'Importing Backup' "$RUNNER_TEMP/aaz-app.strings"
           grep -Fq 'picker-opened' "$RUNNER_TEMP/aaz-app.strings"
           grep -Fq 'picker-host-identity-corrected' "$RUNNER_TEMP/aaz-app.strings"
+          grep -Fq 'picker-copy-mode-created' "$RUNNER_TEMP/aaz-app.strings"
+          grep -Fq 'container-ready' "$RUNNER_TEMP/aaz-app.strings"
+          grep -Fq 'container-unavailable' "$RUNNER_TEMP/aaz-app.strings"
           grep -Fq 'open-in-received' "$RUNNER_TEMP/aaz-app.strings"
           grep -Fq 'x.com/_kkk2' "$RUNNER_TEMP/aaz-app.strings"
           grep -Fq 'Only a healthy backup can be imported' "$RUNNER_TEMP/aaz-app.strings"

@@ -25,8 +25,6 @@ typedef NS_ENUM(NSInteger, ATMBackupErrorCode) {
 - (nullable NSDictionary *)manifestForBackup:(NSURL *)backupURL password:(nullable NSString *)password error:(NSError **)error;
 - (nullable NSDictionary *)backupReportForURL:(NSURL *)backupURL password:(nullable NSString *)password error:(NSError **)error;
 - (nullable NSURL *)stageImportFromURL:(NSURL *)sourceURL error:(NSError **)error;
-- (void)stageImportDocumentAtURL:(NSURL *)sourceURL
-                      completion:(void (^)(NSURL * _Nullable stagedURL, NSError * _Nullable error))completion;
 - (void)discardStagedImportAtURL:(nullable NSURL *)stagedURL;
 - (nullable NSURL *)importBackupFromURL:(NSURL *)sourceURL password:(nullable NSString *)password error:(NSError **)error;
 - (nullable NSDictionary *)compareBackup:(NSURL *)olderURL withBackup:(NSURL *)newerURL error:(NSError **)error;

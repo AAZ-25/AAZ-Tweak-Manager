@@ -19,20 +19,23 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "22"
+assert info["CFBundleVersion"] == "23"
 assert info["LSSupportsOpeningDocumentsInPlace"] is True
 
 with (ROOT / "Resources/AAZTweakManager.entitlements").open("rb") as handle:
     entitlements = plistlib.load(handle)
 assert entitlements["platform-application"] is True
 assert entitlements["application-identifier"] == info["CFBundleIdentifier"]
-assert entitlements["com.apple.private.security.no-container"] is True
+assert entitlements["com.apple.private.security.no-sandbox"] is True
+assert entitlements["com.apple.private.security.storage.AppBundles"] is True
+assert entitlements["com.apple.private.security.storage.AppDataContainers"] is True
+assert "com.apple.private.security.no-container" not in entitlements
 assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["AppIcon60x60"]
 
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta22" in control
+assert "Version: 0.1.0~beta23" in control
 assert "Priority: optional" in control
 
 excluded_directories = {".git", ".theos-build", "packages"}
@@ -99,9 +102,8 @@ assert "importStage=%@" in all_text
 assert "importErrorCode=%ld" in all_text
 assert "Search backups" in all_text
 assert "Pin" in all_text and "Unpin" in all_text
-assert "initForOpeningContentTypes:types asCopy:YES" not in all_text
-assert "initForOpeningContentTypes:types]" in all_text
-assert 'ATMRecordImportDiagnosticEvent(@"picker-copy-mode-created")' not in all_text
+assert "initForOpeningContentTypes:types asCopy:YES" in all_text
+assert 'ATMRecordImportDiagnosticEvent(@"picker-copy-mode-created")' in all_text
 assert "ATMDocumentPickerInitFunction" not in all_text
 assert '@[@"com.aaz.tweakmanager.backup", @"public.archive", @"public.data", @"public.item"]' in all_text
 assert "initForOpeningContentTypes:" in all_text
@@ -115,7 +117,12 @@ assert "ATMImportDiagnosticStageAllowed" in all_text
 assert "importDebugEnabled=%@" in all_text
 assert "importTraceFormat=1" in all_text
 assert "importDebugPrivacy=fixed-stage-labels-only" in all_text
-assert "picker-open-mode-created" in all_text
+assert "picker-copy-mode-created" in all_text
+assert "ATMVerifyApplicationDataContainer" in all_text
+assert '@"/Containers/Data/Application/"' in all_text
+assert "container-ready" in all_text
+assert "container-unavailable" in all_text
+assert ".container-probe" in all_text
 assert "picker-host-identity-corrected" in all_text
 assert "picker-host-identity-unavailable" in all_text
 assert 'NSClassFromString(@"DOCConfiguration")' in all_text
@@ -149,24 +156,12 @@ assert "security-scope-granted" in all_text
 assert "security-scope-not-required" in all_text
 assert "BOOL accessStarted = [url startAccessingSecurityScopedResource]" in all_text
 assert "if (accessStarted) [url stopAccessingSecurityScopedResource]" in all_text
-assert "@interface ATMImportDocument : UIDocument" in all_text
-assert "loadFromContents:(id)contents ofType:" in all_text
-assert "stageImportDocumentAtURL" in all_text
-assert "document-content-received" in all_text
-assert "document-content-invalid" in all_text
-assert "document-write-failed" in all_text
-assert "regularFileContents" in all_text
-assert "writeToURL:self.stagedURL options:NSDataWritingAtomic" in all_text
-document_text = (ROOT / "Core/ATMBackupManager.m").read_text()
-document_class_body = document_text.split("@implementation ATMImportDocument", 1)[1].split("@end", 1)[0]
-assert "readFromURL:" not in document_class_body
-assert "copyItemAtURL:" not in document_class_body
-assert "[document openWithCompletionHandler:" in all_text
-assert "document-open-started" in all_text
-assert "document-open-failed" in all_text
-assert "[self beginPickerImportFromURL:url]" in all_text
-picker_document_body = (ROOT / "App/ATMViewControllers.m").read_text().split("- (void)beginPickerImportFromURL:", 1)[1].split("- (void)beginImportFromURL:", 1)[0]
-assert "startAccessingSecurityScopedResource" not in picker_document_body
+assert "@interface ATMImportDocument : UIDocument" not in all_text
+assert "loadFromContents:(id)contents ofType:" not in all_text
+assert "stageImportDocumentAtURL" not in all_text
+assert "[document openWithCompletionHandler:" not in all_text
+assert "[self beginPickerImportFromURL:url]" not in all_text
+assert "[self beginImportFromURL:url]" in all_text
 assert "ATMHandleBackupURL" in all_text
 assert "open-in-received" in all_text
 assert '"picker-opened"' in all_text
