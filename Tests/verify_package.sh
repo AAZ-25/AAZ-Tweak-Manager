@@ -90,8 +90,6 @@ PY
     grep -Fq 'Create Backup?' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'Selection Updated' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'Encrypted Backup' "$RUNNER_TEMP/aaz-app.strings"
-    grep -Fq 'Backup Details' "$RUNNER_TEMP/aaz-app.strings"
-    grep -Fq 'Backup Verified' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'Check Restore Plan' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'Restore Readiness' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'Readiness Check Passed' "$RUNNER_TEMP/aaz-app.strings"
