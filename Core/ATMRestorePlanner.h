@@ -10,6 +10,9 @@ FOUNDATION_EXPORT NSString *const ATMRestorePlannerErrorDomain;
 - (nullable NSDictionary *)planForManifest:(NSDictionary *)manifest
                           installedPackages:(NSArray<ATMPackageRecord *> *)installed
                                       error:(NSError **)error;
+- (nullable NSDictionary *)executeManifest:(NSDictionary *)manifest
+                               expectedPlan:(NSDictionary *)expectedPlan
+                                      error:(NSError **)error;
 @end
 
 NS_ASSUME_NONNULL_END

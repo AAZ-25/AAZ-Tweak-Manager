@@ -22,7 +22,7 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "28"
+assert info["CFBundleVersion"] == "29"
 assert info["LSSupportsOpeningDocumentsInPlace"] is False
 assert "CFBundleDocumentTypes" not in info
 
@@ -40,7 +40,7 @@ assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["Ap
 with (ROOT / "Extension/Resources/Info.plist").open("rb") as handle:
     extension_info = plistlib.load(handle)
 assert extension_info["CFBundleIdentifier"] == "com.aaz.tweakmanager.importer"
-assert extension_info["CFBundleVersion"] == "28"
+assert extension_info["CFBundleVersion"] == "29"
 assert extension_info["CFBundlePackageType"] == "XPC!"
 extension_definition = extension_info["NSExtension"]
 assert extension_definition["NSExtensionPointIdentifier"] == "com.apple.share-services"
@@ -58,7 +58,7 @@ assert extension_entitlements == {
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta28" in control
+assert "Version: 0.1.0~beta29" in control
 assert "Priority: optional" in control
 
 excluded_directories = {".git", ".theos-build", "packages"}
@@ -174,11 +174,11 @@ for required_restore_guard in (
     '@"APT::Get::AllowUnauthenticated=false"',
     '@"Acquire::AllowInsecureRepositories=false"',
     '@"Debug::NoLocking=true"', '@"showhold"', '@"--compare-versions"', '@"/usr/bin/apt-cache"', '@"check"',
-    "ATMProtectedPackageIDs", '@"safeToExecute": @NO',
+    "ATMProtectedPackageIDs", '@"safeToExecute": @(simulationPassed && blockedCount == 0 && requests.count > 0)',
 ):
     assert required_restore_guard in restore_planner_text, f"missing restore guard: {required_restore_guard}"
 for forbidden_restore_behavior in (
-    '@"-y"', '@"--yes"', '@"--allow-downgrades"',
+    '@"-y"', '@"--allow-downgrades"',
     '@"--allow-remove-essential"', '@"--allow-change-held-packages"',
     '@"--allow-unauthenticated"', '@"--force-yes"',
 ):
@@ -189,6 +189,26 @@ for required_restore_policy in (
     'if (comparisonCode == 0) { newerVersionsKept++; continue; }',
 ):
     assert required_restore_policy in restore_planner_text, f"missing restore policy: {required_restore_policy}"
+for required_executor_guard in (
+    "posix_spawnattr_set_persona_np(&attributes, 99",
+    '@"--no-remove", @"--yes", @"--no-install-recommends"',
+    '@"Acquire::AllowDowngradeToInsecureRepositories=false"',
+    '@"APT::Get::Allow-Downgrades=false"',
+    '@"The Restore plan changed after confirmation.',
+    '@"sourcesChanged": @NO', '@"removalsAllowed": @NO', '@"downgradesAllowed": @NO',
+    '@"identitiesIncluded": @NO',
+    '@"unexpectedActions": @(unexpectedActions)',
+    'if (![requestedVersions[packageID] isEqualToString:version]) unexpectedActions++',
+):
+    assert required_executor_guard in restore_planner_text, f"missing executor guard: {required_executor_guard}"
+assert restore_planner_text.count('@"--yes"') == 1
+assert "NSXPCConnection" not in all_text
+assert "setuid(" not in all_text
+assert "Final Restore Confirmation" in view_controller_text
+assert "Restore Now" in view_controller_text
+assert "Restore Completed" in view_controller_text
+assert "Unexpected Actions" in view_controller_text
+assert 'regularExpressionWithPattern:@"^[0-9A-Za-z.+:~_-]+$"' in restore_planner_text
 assert 'value:self.plan[@"protectedOrInvalid"]' in view_controller_text
 assert 'value:self.plan[@"newerVersionsKept"]' in view_controller_text
 assert "Newer Versions Kept" in view_controller_text

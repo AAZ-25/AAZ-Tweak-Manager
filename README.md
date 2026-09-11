@@ -10,7 +10,8 @@ AAZ Tweak Manager is a Rootless jailbreak app for keeping a clean, portable reco
 - Supports standard or password-encrypted backups. Passwords are never stored.
 - Verifies archive integrity before an import is accepted.
 - Imports from Files through **Share → Save to AAZ Tweak Manager**.
-- Shows backup health, compares backups, and runs a read-only Restore Readiness check.
+- Shows backup health, compares backups, and runs a guarded Restore Readiness check.
+- Restores only missing packages and required upgrades after a separate final confirmation and an immediate plan recheck.
 - Keeps a private on-device history of useful package and backup events.
 
 ## Compatibility
@@ -24,9 +25,9 @@ Rootful and roothide environments are not supported by the current beta.
 
 ## Restore safety
 
-The current beta does not install, remove, or restore packages. Restore Readiness checks package compatibility, protected and held packages, requested versions, repository availability, and a removal-free APT simulation without changing packages or sources.
+Restore first checks package compatibility, protected and held packages, requested versions, repository availability, and a removal-free APT simulation. Execution is never automatic: it requires a second explicit confirmation, repeats the full scan and simulation, and stops if the approved plan changed.
 
-Actual restore execution will remain disabled until the complete safety boundary is verified on a real device.
+The executor can install missing packages and required upgrades only. It keeps newer installed versions and refuses removals, downgrades, protected or held packages, unavailable metadata, insecure or unauthenticated repositories, and source changes. A count-only completion record is retained locally for recovery evidence without exposing package identities.
 
 ## Privacy
 

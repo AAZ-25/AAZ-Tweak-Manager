@@ -1,10 +1,16 @@
 #import "ATMRestorePlanner.h"
 #import <spawn.h>
+#import <fcntl.h>
 #import <signal.h>
 #import <sys/wait.h>
 #import <unistd.h>
 
-extern char **environ;
+#ifndef POSIX_SPAWN_PERSONA_FLAGS_OVERRIDE
+#define POSIX_SPAWN_PERSONA_FLAGS_OVERRIDE 1
+#endif
+extern int posix_spawnattr_set_persona_np(const posix_spawnattr_t *, uid_t, uint32_t);
+extern int posix_spawnattr_set_persona_uid_np(const posix_spawnattr_t *, uid_t);
+extern int posix_spawnattr_set_persona_gid_np(const posix_spawnattr_t *, uid_t);
 NSString *const ATMRestorePlannerErrorDomain = @"com.aaz.tweakmanager.restore-plan";
 
 static NSError *ATMRestorePlanError(NSInteger code, NSString *message) {
@@ -20,8 +26,9 @@ static BOOL ATMRestorePackageIDIsValid(NSString *value) {
 
 static BOOL ATMRestoreVersionIsValid(NSString *value) {
     if (![value isKindOfClass:NSString.class] || value.length < 1 || value.length > 256) return NO;
-    return [value rangeOfCharacterFromSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].location == NSNotFound &&
-           [value rangeOfCharacterFromSet:NSCharacterSet.controlCharacterSet].location == NSNotFound;
+    static NSRegularExpression *expression; static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{ expression = [NSRegularExpression regularExpressionWithPattern:@"^[0-9A-Za-z.+:~_-]+$" options:0 error:nil]; });
+    return [expression numberOfMatchesInString:value options:0 range:NSMakeRange(0, value.length)] == 1;
 }
 
 static NSString *ATMRestoreExecutable(ATMEnvironment *environment, NSArray<NSString *> *paths) {
@@ -32,13 +39,15 @@ static NSString *ATMRestoreExecutable(ATMEnvironment *environment, NSArray<NSStr
     return nil;
 }
 
-static NSDictionary *ATMRestoreRun(NSString *tool, NSArray<NSString *> *arguments) {
+static NSDictionary *ATMRestoreRunWithPrivilege(NSString *tool, NSArray<NSString *> *arguments, BOOL asRoot) {
     int outputPipe[2];
     if (pipe(outputPipe) != 0) return @{ @"exitCode": @(-1), @"output": @"" };
     posix_spawn_file_actions_t actions; posix_spawn_file_actions_init(&actions);
     posix_spawn_file_actions_adddup2(&actions, outputPipe[1], STDOUT_FILENO);
     posix_spawn_file_actions_adddup2(&actions, outputPipe[1], STDERR_FILENO);
     posix_spawn_file_actions_addclose(&actions, outputPipe[0]);
+    int nullInput = open("/dev/null", O_RDONLY | O_CLOEXEC);
+    if (nullInput >= 0) posix_spawn_file_actions_adddup2(&actions, nullInput, STDIN_FILENO);
     NSMutableArray<NSData *> *storage = [NSMutableArray array];
     NSMutableArray<NSValue *> *pointers = [NSMutableArray array];
     NSArray<NSString *> *all = [@[tool] arrayByAddingObjectsFromArray:arguments];
@@ -50,18 +59,33 @@ static NSDictionary *ATMRestoreRun(NSString *tool, NSArray<NSString *> *argument
     char **argv = calloc(pointers.count + 1, sizeof(char *));
     for (NSUInteger index = 0; index < pointers.count; index++) argv[index] = [pointers[index] pointerValue];
     pid_t pid = 0;
-    int spawnResult = posix_spawn(&pid, tool.fileSystemRepresentation, &actions, NULL, argv, environ);
-    free(argv); posix_spawn_file_actions_destroy(&actions); close(outputPipe[1]);
+    posix_spawnattr_t attributes; posix_spawnattr_t *attributesPointer = NULL; BOOL attributesInitialized = NO;
+    int personaResult = 0;
+    if (asRoot) {
+        personaResult = posix_spawnattr_init(&attributes); attributesInitialized = personaResult == 0;
+        if (personaResult == 0) personaResult = posix_spawnattr_set_persona_np(&attributes, 99, POSIX_SPAWN_PERSONA_FLAGS_OVERRIDE);
+        if (personaResult == 0) personaResult = posix_spawnattr_set_persona_uid_np(&attributes, 0);
+        if (personaResult == 0) personaResult = posix_spawnattr_set_persona_gid_np(&attributes, 0);
+        if (personaResult == 0) attributesPointer = &attributes;
+    }
+    char *const fixedEnvironment[] = { "PATH=/var/jb/usr/bin:/var/jb/usr/sbin:/var/jb/bin:/var/jb/sbin:/usr/bin:/bin:/usr/sbin:/sbin", "DEBIAN_FRONTEND=noninteractive", "LC_ALL=C", NULL };
+    int spawnResult = personaResult != 0 ? personaResult : posix_spawn(&pid, tool.fileSystemRepresentation, &actions, attributesPointer, argv, fixedEnvironment);
+    if (attributesInitialized) posix_spawnattr_destroy(&attributes);
+    free(argv); posix_spawn_file_actions_destroy(&actions); close(outputPipe[1]); if (nullInput >= 0) close(nullInput);
     if (spawnResult != 0) { close(outputPipe[0]); return @{ @"exitCode": @(spawnResult), @"output": @"" }; }
     NSMutableData *captured = [NSMutableData data]; uint8_t buffer[8192]; ssize_t count = 0;
     while ((count = read(outputPipe[0], buffer, sizeof(buffer))) > 0) {
-        if (captured.length + (NSUInteger)count > 1024 * 1024) { kill(pid, SIGKILL); break; }
-        [captured appendBytes:buffer length:(NSUInteger)count];
+        NSUInteger remaining = captured.length < 1024 * 1024 ? 1024 * 1024 - captured.length : 0;
+        if (remaining) [captured appendBytes:buffer length:MIN((NSUInteger)count, remaining)];
     }
     close(outputPipe[0]); int status = 0; waitpid(pid, &status, 0);
     NSInteger exitCode = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
     NSString *output = [[NSString alloc] initWithData:captured encoding:NSUTF8StringEncoding] ?: @"";
     return @{ @"exitCode": @(exitCode), @"output": output };
+}
+
+static NSDictionary *ATMRestoreRun(NSString *tool, NSArray<NSString *> *arguments) {
+    return ATMRestoreRunWithPrivilege(tool, arguments, NO);
 }
 
 static NSDictionary *ATMRestoreHeldPackages(ATMEnvironment *environment) {
@@ -146,36 +170,108 @@ static NSDictionary *ATMRestoreHeldPackages(ATMEnvironment *environment) {
     if (![holdCheck[@"success"] boolValue]) { prerequisiteFailures++; blockedCount++; }
     NSString *aptGet = ATMRestoreExecutable(self.environment, @[@"/usr/bin/apt-get", @"/bin/apt-get"]);
     BOOL attempted = aptGet.length && blockedCount == 0;
-    __block NSUInteger installActions = 0, configureActions = 0, removalActions = 0, errorLines = 0;
+    __block NSUInteger installActions = 0, configureActions = 0, removalActions = 0, unexpectedActions = 0, errorLines = 0;
     NSInteger exitCode = -1;
     if (attempted) {
         NSMutableArray *arguments = [@[@"--simulate", @"--no-remove", @"--assume-no", @"--no-install-recommends", @"-o", @"APT::Get::AllowUnauthenticated=false", @"-o", @"Acquire::AllowInsecureRepositories=false", @"-o", @"Debug::NoLocking=true"] mutableCopy];
         if (requests.count) { [arguments addObject:@"install"]; [arguments addObjectsFromArray:requests]; }
         else [arguments addObject:@"check"];
+        NSMutableDictionary<NSString *, NSString *> *requestedVersions = [NSMutableDictionary dictionary];
+        for (NSString *request in requests) { NSRange separator = [request rangeOfString:@"=" options:NSBackwardsSearch]; if (separator.location != NSNotFound) requestedVersions[[request substringToIndex:separator.location]] = [request substringFromIndex:separator.location + 1]; }
+        NSRegularExpression *actionExpression = [NSRegularExpression regularExpressionWithPattern:@"^(?:Inst|Conf) ([a-z0-9][a-z0-9+.-]*)(?: \\[[^\\]]*\\])? \\(([^ )]+)" options:0 error:nil];
         NSDictionary *result = ATMRestoreRun(aptGet, arguments); exitCode = [result[@"exitCode"] integerValue];
         [result[@"output"] enumerateLinesUsingBlock:^(NSString *line, BOOL *stop) {
             (void)stop;
-            if ([line hasPrefix:@"Inst "]) installActions++;
-            else if ([line hasPrefix:@"Conf "]) configureActions++;
+            if ([line hasPrefix:@"Inst "] || [line hasPrefix:@"Conf "]) {
+                BOOL install = [line hasPrefix:@"Inst "]; if (install) installActions++; else configureActions++;
+                NSTextCheckingResult *match = [actionExpression firstMatchInString:line options:0 range:NSMakeRange(0, line.length)];
+                if (!match || match.numberOfRanges < 3) { unexpectedActions++; return; }
+                NSString *packageID = [line substringWithRange:[match rangeAtIndex:1]], *version = [line substringWithRange:[match rangeAtIndex:2]];
+                if (![requestedVersions[packageID] isEqualToString:version]) unexpectedActions++;
+            }
             else if ([line hasPrefix:@"Remv "]) removalActions++;
             else if ([line hasPrefix:@"E:"]) errorLines++;
         }];
     }
-    BOOL simulationPassed = attempted && exitCode == 0 && removalActions == 0 && errorLines == 0;
+    BOOL simulationPassed = attempted && exitCode == 0 && removalActions == 0 && unexpectedActions == 0 && errorLines == 0;
     BOOL alreadySatisfied = requests.count == 0 && blockedCount == 0;
     NSString *reason = ![holdCheck[@"success"] boolValue] ? @"The held-package safety check could not be completed." :
         (blockedCount ? @"Resolve the listed safety checks before Restore." :
         (!aptGet.length ? @"The package-manager safety check is unavailable." :
-        (!simulationPassed ? @"The package manager could not produce a safe, removal-free plan." :
+        (!simulationPassed ? @"The package manager could not produce an exact, removal-free plan." :
         (alreadySatisfied && newerVersionsKept ? @"All required packages are installed. Newer installed versions will be kept." :
         (alreadySatisfied ? @"All backup package versions are installed and the safety check passed." :
         @"The restore preview completed safely without removals.")))));
+    NSDictionary *executionSnapshot = @{ @"requests": [requests copy], @"blocked": @(blockedCount), @"installActions": @(installActions), @"configureActions": @(configureActions), @"removalActions": @(removalActions), @"unexpectedActions": @(unexpectedActions), @"simulationPassed": @(simulationPassed) };
     return @{ @"packageCount": @(packages.count), @"alreadyInstalled": @(alreadyInstalled), @"missing": @(missing), @"versionChanges": @(versionChanges), @"updatesNeeded": @(updatesNeeded), @"newerVersionsKept": @(newerVersionsKept),
               @"exactPayloads": @(payloads), @"payloadUnavailable": @(unavailablePayloads), @"held": @(heldCount), @"blocked": @(blockedCount),
               @"protectedOrInvalid": @(protectedOrInvalid), @"metadataUnavailable": @(metadataUnavailable), @"prerequisiteFailures": @(prerequisiteFailures),
               @"holdCheckPassed": holdCheck[@"success"],
               @"simulationAttempted": @(attempted), @"simulationPassed": @(simulationPassed), @"aptExitCode": @(exitCode),
-              @"installActions": @(installActions), @"configureActions": @(configureActions), @"removalActions": @(removalActions),
-              @"safeToExecute": @NO, @"reason": reason };
+              @"installActions": @(installActions), @"configureActions": @(configureActions), @"removalActions": @(removalActions), @"unexpectedActions": @(unexpectedActions),
+              @"executionRequests": [requests copy], @"executionSnapshot": executionSnapshot,
+              @"safeToExecute": @(simulationPassed && blockedCount == 0 && requests.count > 0), @"reason": reason };
+}
+
+- (NSDictionary *)executeManifest:(NSDictionary *)manifest expectedPlan:(NSDictionary *)expectedPlan error:(NSError **)error {
+    if (![expectedPlan[@"safeToExecute"] boolValue] || ![expectedPlan[@"executionSnapshot"] isKindOfClass:NSDictionary.class]) {
+        if (error) *error = ATMRestorePlanError(72, @"This plan is not approved for execution.");
+        return nil;
+    }
+    NSError *scanError = nil;
+    NSArray<ATMPackageRecord *> *installed = [[[ATMPackageScanner alloc] initWithEnvironment:self.environment] scanInstalledPackages:&scanError];
+    if (scanError || !installed) {
+        if (error) *error = ATMRestorePlanError(73, @"Installed packages could not be rechecked immediately before Restore.");
+        return nil;
+    }
+    NSError *planError = nil;
+    NSDictionary *currentPlan = [self planForManifest:manifest installedPackages:installed error:&planError];
+    if (!currentPlan || ![currentPlan[@"safeToExecute"] boolValue]) {
+        if (error) *error = planError ?: ATMRestorePlanError(74, @"The Restore plan no longer passes every safety check.");
+        return nil;
+    }
+    if (![currentPlan[@"executionSnapshot"] isEqual:expectedPlan[@"executionSnapshot"]]) {
+        if (error) *error = ATMRestorePlanError(75, @"The Restore plan changed after confirmation. Run the readiness check again.");
+        return nil;
+    }
+    NSArray<NSString *> *requests = currentPlan[@"executionRequests"];
+    NSString *aptGet = ATMRestoreExecutable(self.environment, @[@"/usr/bin/apt-get", @"/bin/apt-get"]);
+    if (!aptGet.length || !requests.count) {
+        if (error) *error = ATMRestorePlanError(76, @"The approved package-manager action is unavailable.");
+        return nil;
+    }
+    NSMutableArray<NSString *> *arguments = [@[@"--no-remove", @"--yes", @"--no-install-recommends",
+        @"-o", @"APT::Get::AllowUnauthenticated=false",
+        @"-o", @"Acquire::AllowInsecureRepositories=false",
+        @"-o", @"Acquire::AllowDowngradeToInsecureRepositories=false",
+        @"-o", @"APT::Get::Allow-Downgrades=false", @"install"] mutableCopy];
+    [arguments addObjectsFromArray:requests];
+    NSDictionary *run = ATMRestoreRunWithPrivilege(aptGet, arguments, YES);
+    NSInteger aptExitCode = [run[@"exitCode"] integerValue];
+
+    NSError *postScanError = nil;
+    NSArray<ATMPackageRecord *> *afterInstalled = [[[ATMPackageScanner alloc] initWithEnvironment:self.environment] scanInstalledPackages:&postScanError];
+    NSDictionary *postPlan = afterInstalled ? [self planForManifest:manifest installedPackages:afterInstalled error:nil] : nil;
+    NSMutableDictionary<NSString *, ATMPackageRecord *> *afterByID = [NSMutableDictionary dictionary];
+    for (ATMPackageRecord *record in afterInstalled ?: @[]) if (record.packageID.length) afterByID[record.packageID] = record;
+    NSString *dpkg = ATMRestoreExecutable(self.environment, @[@"/usr/bin/dpkg", @"/bin/dpkg"]); NSUInteger completed = 0;
+    for (NSString *request in requests) {
+        NSRange separator = [request rangeOfString:@"=" options:NSBackwardsSearch]; if (separator.location == NSNotFound) continue;
+        NSString *packageID = [request substringToIndex:separator.location], *version = [request substringFromIndex:separator.location + 1];
+        NSString *installedVersion = afterByID[packageID].version;
+        if ([installedVersion isEqualToString:version]) { completed++; continue; }
+        if (dpkg.length && installedVersion.length && [ATMRestoreRun(dpkg, @[@"--compare-versions", installedVersion, @"gt", version])[@"exitCode"] integerValue] == 0) completed++;
+    }
+    NSUInteger remaining = requests.count - completed;
+    BOOL postCheckPassed = !postScanError && postPlan && [postPlan[@"simulationPassed"] boolValue] && [postPlan[@"blocked"] unsignedIntegerValue] == 0 && remaining == 0;
+    BOOL success = aptExitCode == 0 && postCheckPassed;
+    NSString *reason = success ? @"Restore completed and the package state passed verification." :
+        (postScanError ? @"Restore finished, but the final package-state verification was unavailable." :
+        (aptExitCode != 0 ? @"The package manager stopped before Restore completed." : @"Restore stopped because the final package state did not match the approved plan."));
+    return @{ @"success": @(success), @"requested": @(requests.count), @"completed": @(completed), @"remaining": @(remaining),
+              @"aptExitCode": @(aptExitCode), @"postCheckPassed": @(postCheckPassed),
+              @"removalsAllowed": @NO, @"downgradesAllowed": @NO, @"sourcesChanged": @NO,
+              @"rollbackEvidence": @{ @"preRestoreRequestCount": @(requests.count), @"postRestoreRequestCount": @(remaining), @"identitiesIncluded": @NO },
+              @"reason": reason };
 }
 @end

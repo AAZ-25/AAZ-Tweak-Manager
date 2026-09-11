@@ -40,6 +40,9 @@ typedef NS_ENUM(NSInteger, ATMBackupErrorCode) {
 - (nullable NSDictionary *)restoreReadinessForManifest:(NSDictionary *)manifest
                                       installedPackages:(NSArray<ATMPackageRecord *> *)installed
                                                   error:(NSError **)error;
+- (nullable NSDictionary *)executeRestoreForManifest:(NSDictionary *)manifest
+                                         expectedPlan:(NSDictionary *)expectedPlan
+                                                error:(NSError **)error;
 @end
 
 NS_ASSUME_NONNULL_END
