@@ -29,6 +29,8 @@ Restore first checks package compatibility, protected and held packages, request
 
 The executor can install missing packages and required upgrades only. It keeps newer installed versions and refuses removals, downgrades, protected or held packages, unavailable metadata, insecure or unauthenticated repositories, and source changes. A count-only completion record is retained locally for recovery evidence without exposing package identities.
 
+The Rootless app uses a fixed persona-based package-manager launch boundary with the required persona/root-spawn entitlements. It never accepts a caller-supplied command. Restore failures are reduced to fixed privacy-safe codes and a numeric exit status; raw package-manager output, package identities, versions, and paths are not stored or shared.
+
 ## Privacy
 
 Backups and diagnostics stay focused on the information needed by the tool. Repository credentials, passwords, tokens, account details, device identifiers, personal files, and raw diagnostic paths are not included. Paid or private repositories may require sign-in again after transfer.

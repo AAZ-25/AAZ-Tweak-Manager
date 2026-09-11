@@ -315,6 +315,26 @@ static NSString *const ATMImportDiagnosticsEnabledKey = @"ATMImportDiagnosticsEn
 static NSString *const ATMImportTraceKey = @"ATMImportTraceV1";
 static NSString *const ATMLastImportStageKey = @"ATMLastImportStageV1";
 static NSString *const ATMLastImportErrorCodeKey = @"ATMLastImportErrorCodeV1";
+static NSString *const ATMLastRestoreCodeKey = @"ATMLastRestoreCodeV1";
+static NSString *const ATMLastRestoreExitCodeKey = @"ATMLastRestoreExitCodeV1";
+
+static BOOL ATMRestoreDiagnosticCodeAllowed(NSString *code) {
+    static NSSet<NSString *> *allowedCodes; static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        allowedCodes = [NSSet setWithArray:@[
+            @"R30-STARTED", @"R30-OK", @"R30-PRECHECK", @"R30-PERSONA", @"R30-SPAWN",
+            @"R30-SIGNAL", @"R30-LOCK", @"R30-PRIVILEGE", @"R30-AUTH", @"R30-NETWORK",
+            @"R30-DPKG", @"R30-APT", @"R30-POSTSCAN", @"R30-VERIFY", @"R30-UNKNOWN"
+        ]];
+    });
+    return [code isKindOfClass:NSString.class] && [allowedCodes containsObject:code];
+}
+
+void ATMSetRestoreDiagnosticState(NSString *code, NSInteger exitCode) {
+    NSString *safeCode = ATMRestoreDiagnosticCodeAllowed(code) ? code : @"R30-UNKNOWN";
+    [NSUserDefaults.standardUserDefaults setObject:safeCode forKey:ATMLastRestoreCodeKey];
+    [NSUserDefaults.standardUserDefaults setInteger:exitCode forKey:ATMLastRestoreExitCodeKey];
+}
 
 static BOOL ATMImportDiagnosticStageAllowed(NSString *stage) {
     static NSSet<NSString *> *allowedStages; static dispatch_once_t onceToken;
@@ -414,6 +434,9 @@ NSURL *ATMWriteDiagnosticReport(ATMEnvironment *environment,
         [NSString stringWithFormat:@"selected=%lu", (unsigned long)selectedPackageIDs.count],
         [NSString stringWithFormat:@"importStage=%@", [NSUserDefaults.standardUserDefaults stringForKey:@"ATMLastImportStageV1"] ?: @"not-run"],
         [NSString stringWithFormat:@"importErrorCode=%ld", (long)[NSUserDefaults.standardUserDefaults integerForKey:@"ATMLastImportErrorCodeV1"]],
+        [NSString stringWithFormat:@"restoreCode=%@", [NSUserDefaults.standardUserDefaults stringForKey:ATMLastRestoreCodeKey] ?: @"not-run"],
+        [NSString stringWithFormat:@"restoreExitCode=%ld", (long)[NSUserDefaults.standardUserDefaults integerForKey:ATMLastRestoreExitCodeKey]],
+        @"restoreDiagnosticPrivacy=fixed-code-and-exit-only",
         @"privacy=counts-and-stage-flags-only"
     ] mutableCopy];
     BOOL importDebugEnabled = ATMImportDiagnosticsEnabled();

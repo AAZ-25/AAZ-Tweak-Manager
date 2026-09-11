@@ -19,7 +19,7 @@ case "$phase" in
   metadata)
     test -f "$deb"
     test "$(dpkg-deb -f "$deb" Package)" = "com.aaz.tweakmanager"
-    test "$(dpkg-deb -f "$deb" Version)" = "0.1.0~beta29"
+    test "$(dpkg-deb -f "$deb" Version)" = "0.1.0~beta30"
     test "$(dpkg-deb -f "$deb" Architecture)" = "iphoneos-arm64"
     dpkg-deb -c "$deb" > "$package_list"
     ;;
@@ -53,6 +53,8 @@ with open(sys.argv[4], "rb") as handle:
     extension_info = plistlib.load(handle)
 
 assert entitlements["platform-application"] is True
+assert entitlements["com.apple.private.persona-mgmt"] is True
+assert entitlements["com.apple.private.spawn-subsystem-root"] is True
 assert entitlements["application-identifier"] == "com.aaz.tweakmanager"
 assert entitlements["com.apple.private.security.no-sandbox"] is True
 assert entitlements["com.apple.private.security.storage.AppBundles"] is True
@@ -63,10 +65,10 @@ assert extension_entitlements == {
     "application-identifier": "com.aaz.tweakmanager.importer",
     "com.apple.security.application-groups": ["group.com.aaz.tweakmanager"],
 }
-assert app_info["CFBundleVersion"] == "29"
+assert app_info["CFBundleVersion"] == "30"
 assert "CFBundleDocumentTypes" not in app_info
 assert extension_info["CFBundleIdentifier"] == "com.aaz.tweakmanager.importer"
-assert extension_info["CFBundleVersion"] == "29"
+assert extension_info["CFBundleVersion"] == "30"
 definition = extension_info["NSExtension"]
 assert definition["NSExtensionPointIdentifier"] == "com.apple.share-services"
 assert definition["NSExtensionPrincipalClass"] == "AAZShareViewController"
@@ -97,6 +99,9 @@ PY
     grep -Fq -- '--yes' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'Final Restore Confirmation' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'The Restore plan changed after confirmation' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'DPkg::Lock::Timeout=30' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'Restore code:' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'restoreDiagnosticPrivacy=fixed-code-and-exit-only' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'Selection Profiles' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'Manage Profiles' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'Importing Backup' "$RUNNER_TEMP/aaz-app.strings"

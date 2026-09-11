@@ -22,13 +22,15 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "29"
+assert info["CFBundleVersion"] == "30"
 assert info["LSSupportsOpeningDocumentsInPlace"] is False
 assert "CFBundleDocumentTypes" not in info
 
 with (ROOT / "Resources/AAZTweakManager.entitlements").open("rb") as handle:
     entitlements = plistlib.load(handle)
 assert entitlements["platform-application"] is True
+assert entitlements["com.apple.private.persona-mgmt"] is True
+assert entitlements["com.apple.private.spawn-subsystem-root"] is True
 assert entitlements["application-identifier"] == info["CFBundleIdentifier"]
 assert entitlements["com.apple.private.security.no-sandbox"] is True
 assert entitlements["com.apple.private.security.storage.AppBundles"] is True
@@ -40,7 +42,7 @@ assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["Ap
 with (ROOT / "Extension/Resources/Info.plist").open("rb") as handle:
     extension_info = plistlib.load(handle)
 assert extension_info["CFBundleIdentifier"] == "com.aaz.tweakmanager.importer"
-assert extension_info["CFBundleVersion"] == "29"
+assert extension_info["CFBundleVersion"] == "30"
 assert extension_info["CFBundlePackageType"] == "XPC!"
 extension_definition = extension_info["NSExtension"]
 assert extension_definition["NSExtensionPointIdentifier"] == "com.apple.share-services"
@@ -58,7 +60,7 @@ assert extension_entitlements == {
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta29" in control
+assert "Version: 0.1.0~beta30" in control
 assert "Priority: optional" in control
 
 excluded_directories = {".git", ".theos-build", "packages"}
@@ -194,6 +196,9 @@ for required_executor_guard in (
     '@"--no-remove", @"--yes", @"--no-install-recommends"',
     '@"Acquire::AllowDowngradeToInsecureRepositories=false"',
     '@"APT::Get::Allow-Downgrades=false"',
+    '@"DPkg::Lock::Timeout=30"',
+    '"R30-PERSONA"', '"R30-SPAWN"', '"R30-LOCK"', '"R30-PRIVILEGE"',
+    '"R30-AUTH"', '"R30-NETWORK"', '"R30-DPKG"', '"R30-APT"',
     '@"The Restore plan changed after confirmation.',
     '@"sourcesChanged": @NO', '@"removalsAllowed": @NO', '@"downgradesAllowed": @NO',
     '@"identitiesIncluded": @NO',
@@ -214,6 +219,10 @@ assert 'value:self.plan[@"newerVersionsKept"]' in view_controller_text
 assert "Newer Versions Kept" in view_controller_text
 assert "Blocked Downgrades" not in view_controller_text
 assert 'result[@"output"]' not in view_controller_text
+assert "Restore code:" in view_controller_text
+assert "APT exit:" in view_controller_text
+assert "ATMSetRestoreDiagnosticState" in all_text
+assert "restoreDiagnosticPrivacy=fixed-code-and-exit-only" in (ROOT / "Core/ATMCore.m").read_text()
 assert "No packages or sources were changed." in view_controller_text
 assert "ATMRestoreReadinessController" in view_controller_text
 assert "restorePreviewForBackup" not in all_text
@@ -255,7 +264,7 @@ assert '@"jailbreakPrefix"' not in (ROOT / "Core/ATMBackupManager.m").read_text(
 assert '@"iOSVersion"' not in (ROOT / "Core/ATMBackupManager.m").read_text()
 core_text = (ROOT / "Core/ATMCore.m").read_text()
 diagnostic_body = core_text.split("NSURL *ATMWriteDiagnosticReport", 1)[1].split("@implementation ATMPersonalLedger", 1)[0]
-for private_field in ("record.packageID", "record.name", "record.version", "sourceOrigin", "depends"):
+for private_field in ("record.packageID", "record.name", "record.version", "sourceOrigin", "depends", 'run[@"output"]'):
     assert private_field not in diagnostic_body, f"diagnostic exposes {private_field}"
 assert "performsFirstActionWithFullSwipe = NO" in all_text
 assert "workflow_dispatch:" in (ROOT / ".github/workflows/build.yml").read_text()

@@ -1,5 +1,6 @@
 #import "ATMRestorePlanner.h"
 #import <spawn.h>
+#import <errno.h>
 #import <fcntl.h>
 #import <signal.h>
 #import <sys/wait.h>
@@ -41,7 +42,10 @@ static NSString *ATMRestoreExecutable(ATMEnvironment *environment, NSArray<NSStr
 
 static NSDictionary *ATMRestoreRunWithPrivilege(NSString *tool, NSArray<NSString *> *arguments, BOOL asRoot) {
     int outputPipe[2];
-    if (pipe(outputPipe) != 0) return @{ @"exitCode": @(-1), @"output": @"" };
+    if (pipe(outputPipe) != 0) {
+        int pipeError = errno;
+        return @{ @"exitCode": @(-1), @"output": @"", @"personaError": @0, @"spawnError": @(pipeError), @"signal": @0 };
+    }
     posix_spawn_file_actions_t actions; posix_spawn_file_actions_init(&actions);
     posix_spawn_file_actions_adddup2(&actions, outputPipe[1], STDOUT_FILENO);
     posix_spawn_file_actions_adddup2(&actions, outputPipe[1], STDERR_FILENO);
@@ -72,16 +76,39 @@ static NSDictionary *ATMRestoreRunWithPrivilege(NSString *tool, NSArray<NSString
     int spawnResult = personaResult != 0 ? personaResult : posix_spawn(&pid, tool.fileSystemRepresentation, &actions, attributesPointer, argv, fixedEnvironment);
     if (attributesInitialized) posix_spawnattr_destroy(&attributes);
     free(argv); posix_spawn_file_actions_destroy(&actions); close(outputPipe[1]); if (nullInput >= 0) close(nullInput);
-    if (spawnResult != 0) { close(outputPipe[0]); return @{ @"exitCode": @(spawnResult), @"output": @"" }; }
+    if (spawnResult != 0) {
+        close(outputPipe[0]);
+        return @{ @"exitCode": @(-1), @"output": @"", @"personaError": @(personaResult), @"spawnError": @(spawnResult), @"signal": @0 };
+    }
     NSMutableData *captured = [NSMutableData data]; uint8_t buffer[8192]; ssize_t count = 0;
     while ((count = read(outputPipe[0], buffer, sizeof(buffer))) > 0) {
         NSUInteger remaining = captured.length < 1024 * 1024 ? 1024 * 1024 - captured.length : 0;
         if (remaining) [captured appendBytes:buffer length:MIN((NSUInteger)count, remaining)];
     }
-    close(outputPipe[0]); int status = 0; waitpid(pid, &status, 0);
-    NSInteger exitCode = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+    close(outputPipe[0]); int status = 0; pid_t waitResult = waitpid(pid, &status, 0);
+    NSInteger signalCode = waitResult >= 0 && WIFSIGNALED(status) ? WTERMSIG(status) : 0;
+    NSInteger exitCode = waitResult >= 0 && WIFEXITED(status) ? WEXITSTATUS(status) : -1;
     NSString *output = [[NSString alloc] initWithData:captured encoding:NSUTF8StringEncoding] ?: @"";
-    return @{ @"exitCode": @(exitCode), @"output": output };
+    return @{ @"exitCode": @(exitCode), @"output": output, @"personaError": @0, @"spawnError": @0, @"signal": @(signalCode) };
+}
+
+static BOOL ATMRestoreOutputContainsAny(NSString *output, NSArray<NSString *> *needles) {
+    NSString *lowercase = [output lowercaseString];
+    for (NSString *needle in needles) if ([lowercase containsString:needle]) return YES;
+    return NO;
+}
+
+static NSString *ATMRestoreFailureCode(NSDictionary *run) {
+    if ([run[@"personaError"] integerValue] != 0) return @"R30-PERSONA";
+    if ([run[@"spawnError"] integerValue] != 0) return @"R30-SPAWN";
+    if ([run[@"signal"] integerValue] != 0) return @"R30-SIGNAL";
+    NSString *output = [run[@"output"] isKindOfClass:NSString.class] ? run[@"output"] : @"";
+    if (ATMRestoreOutputContainsAny(output, @[@"could not get lock", @"unable to acquire the dpkg frontend lock", @"is another process using it"])) return @"R30-LOCK";
+    if (ATMRestoreOutputContainsAny(output, @[@"permission denied", @"operation not permitted", @"are you root"])) return @"R30-PRIVILEGE";
+    if (ATMRestoreOutputContainsAny(output, @[@"unauthenticated packages", @"not signed", @"does not have a release file"])) return @"R30-AUTH";
+    if (ATMRestoreOutputContainsAny(output, @[@"temporary failure resolving", @"could not resolve", @"failed to fetch", @"connection failed", @"network is unreachable"])) return @"R30-NETWORK";
+    if (ATMRestoreOutputContainsAny(output, @[@"sub-process /usr/bin/dpkg returned an error code", @"dpkg: error", @"dependency problems - leaving unconfigured"])) return @"R30-DPKG";
+    return @"R30-APT";
 }
 
 static NSDictionary *ATMRestoreRun(NSString *tool, NSArray<NSString *> *arguments) {
@@ -244,7 +271,8 @@ static NSDictionary *ATMRestoreHeldPackages(ATMEnvironment *environment) {
         @"-o", @"APT::Get::AllowUnauthenticated=false",
         @"-o", @"Acquire::AllowInsecureRepositories=false",
         @"-o", @"Acquire::AllowDowngradeToInsecureRepositories=false",
-        @"-o", @"APT::Get::Allow-Downgrades=false", @"install"] mutableCopy];
+        @"-o", @"APT::Get::Allow-Downgrades=false",
+        @"-o", @"DPkg::Lock::Timeout=30", @"install"] mutableCopy];
     [arguments addObjectsFromArray:requests];
     NSDictionary *run = ATMRestoreRunWithPrivilege(aptGet, arguments, YES);
     NSInteger aptExitCode = [run[@"exitCode"] integerValue];
@@ -265,11 +293,13 @@ static NSDictionary *ATMRestoreHeldPackages(ATMEnvironment *environment) {
     NSUInteger remaining = requests.count - completed;
     BOOL postCheckPassed = !postScanError && postPlan && [postPlan[@"simulationPassed"] boolValue] && [postPlan[@"blocked"] unsignedIntegerValue] == 0 && remaining == 0;
     BOOL success = aptExitCode == 0 && postCheckPassed;
+    NSString *restoreCode = success ? @"R30-OK" :
+        (postScanError ? @"R30-POSTSCAN" : (aptExitCode != 0 ? ATMRestoreFailureCode(run) : @"R30-VERIFY"));
     NSString *reason = success ? @"Restore completed and the package state passed verification." :
         (postScanError ? @"Restore finished, but the final package-state verification was unavailable." :
         (aptExitCode != 0 ? @"The package manager stopped before Restore completed." : @"Restore stopped because the final package state did not match the approved plan."));
     return @{ @"success": @(success), @"requested": @(requests.count), @"completed": @(completed), @"remaining": @(remaining),
-              @"aptExitCode": @(aptExitCode), @"postCheckPassed": @(postCheckPassed),
+              @"aptExitCode": @(aptExitCode), @"restoreCode": restoreCode, @"postCheckPassed": @(postCheckPassed),
               @"removalsAllowed": @NO, @"downgradesAllowed": @NO, @"sourcesChanged": @NO,
               @"rollbackEvidence": @{ @"preRestoreRequestCount": @(requests.count), @"postRestoreRequestCount": @(remaining), @"identitiesIncluded": @NO },
               @"reason": reason };

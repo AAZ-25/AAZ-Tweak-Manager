@@ -58,6 +58,7 @@ FOUNDATION_EXPORT void ATMSetImportDiagnosticsEnabled(BOOL enabled);
 FOUNDATION_EXPORT void ATMClearImportDiagnosticTrace(void);
 FOUNDATION_EXPORT void ATMRecordImportDiagnosticEvent(NSString *stage);
 FOUNDATION_EXPORT void ATMSetImportDiagnosticState(NSString *stage, NSInteger code);
+FOUNDATION_EXPORT void ATMSetRestoreDiagnosticState(NSString *code, NSInteger exitCode);
 
 FOUNDATION_EXPORT NSURL * _Nullable ATMWriteDiagnosticReport(ATMEnvironment *environment,
                                                               NSArray<ATMPackageRecord *> *packages,

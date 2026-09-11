@@ -4,6 +4,10 @@
 <dict>
     <key>platform-application</key>
     <true/>
+    <key>com.apple.private.persona-mgmt</key>
+    <true/>
+    <key>com.apple.private.spawn-subsystem-root</key>
+    <true/>
     <key>application-identifier</key>
     <string>com.aaz.tweakmanager</string>
     <key>com.apple.private.security.no-sandbox</key>
