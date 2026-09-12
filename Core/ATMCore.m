@@ -322,16 +322,16 @@ static BOOL ATMRestoreDiagnosticCodeAllowed(NSString *code) {
     static NSSet<NSString *> *allowedCodes; static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         allowedCodes = [NSSet setWithArray:@[
-            @"R31-READINESS", @"R31-READY", @"R31-BLOCKED", @"R31-STARTED", @"R31-OK", @"R31-PRECHECK",
-            @"R31-PERSONA", @"R31-SPAWN", @"R31-SIGNAL", @"R31-LOCK", @"R31-PRIVILEGE", @"R31-AUTH",
-            @"R31-NETWORK", @"R31-DPKG", @"R31-APT", @"R31-POSTSCAN", @"R31-VERIFY", @"R31-UNKNOWN"
+            @"R32-READINESS", @"R32-READY", @"R32-BLOCKED", @"R32-STARTED", @"R32-OK", @"R32-PRECHECK",
+            @"R32-PERSONA", @"R32-SPAWN", @"R32-SIGNAL", @"R32-LOCK", @"R32-PRIVILEGE", @"R32-AUTH",
+            @"R32-NETWORK", @"R32-DPKG", @"R32-APT", @"R32-POSTSCAN", @"R32-VERIFY", @"R32-UNKNOWN"
         ]];
     });
     return [code isKindOfClass:NSString.class] && [allowedCodes containsObject:code];
 }
 
 void ATMSetRestoreDiagnosticState(NSString *code, NSInteger exitCode) {
-    NSString *safeCode = ATMRestoreDiagnosticCodeAllowed(code) ? code : @"R31-UNKNOWN";
+    NSString *safeCode = ATMRestoreDiagnosticCodeAllowed(code) ? code : @"R32-UNKNOWN";
     [NSUserDefaults.standardUserDefaults setObject:safeCode forKey:ATMLastRestoreCodeKey];
     [NSUserDefaults.standardUserDefaults setInteger:exitCode forKey:ATMLastRestoreExitCodeKey];
 }

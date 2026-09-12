@@ -99,16 +99,16 @@ static BOOL ATMRestoreOutputContainsAny(NSString *output, NSArray<NSString *> *n
 }
 
 static NSString *ATMRestoreFailureCode(NSDictionary *run) {
-    if ([run[@"personaError"] integerValue] != 0) return @"R31-PERSONA";
-    if ([run[@"spawnError"] integerValue] != 0) return @"R31-SPAWN";
-    if ([run[@"signal"] integerValue] != 0) return @"R31-SIGNAL";
+    if ([run[@"personaError"] integerValue] != 0) return @"R32-PERSONA";
+    if ([run[@"spawnError"] integerValue] != 0) return @"R32-SPAWN";
+    if ([run[@"signal"] integerValue] != 0) return @"R32-SIGNAL";
     NSString *output = [run[@"output"] isKindOfClass:NSString.class] ? run[@"output"] : @"";
-    if (ATMRestoreOutputContainsAny(output, @[@"could not get lock", @"unable to acquire the dpkg frontend lock", @"is another process using it"])) return @"R31-LOCK";
-    if (ATMRestoreOutputContainsAny(output, @[@"permission denied", @"operation not permitted", @"are you root"])) return @"R31-PRIVILEGE";
-    if (ATMRestoreOutputContainsAny(output, @[@"unauthenticated packages", @"not signed", @"does not have a release file"])) return @"R31-AUTH";
-    if (ATMRestoreOutputContainsAny(output, @[@"temporary failure resolving", @"could not resolve", @"failed to fetch", @"connection failed", @"network is unreachable"])) return @"R31-NETWORK";
-    if (ATMRestoreOutputContainsAny(output, @[@"sub-process /usr/bin/dpkg returned an error code", @"dpkg: error", @"dependency problems - leaving unconfigured"])) return @"R31-DPKG";
-    return @"R31-APT";
+    if (ATMRestoreOutputContainsAny(output, @[@"could not get lock", @"unable to acquire the dpkg frontend lock", @"is another process using it"])) return @"R32-LOCK";
+    if (ATMRestoreOutputContainsAny(output, @[@"permission denied", @"operation not permitted", @"are you root"])) return @"R32-PRIVILEGE";
+    if (ATMRestoreOutputContainsAny(output, @[@"unauthenticated packages", @"not signed", @"does not have a release file"])) return @"R32-AUTH";
+    if (ATMRestoreOutputContainsAny(output, @[@"temporary failure resolving", @"could not resolve", @"failed to fetch", @"connection failed", @"network is unreachable"])) return @"R32-NETWORK";
+    if (ATMRestoreOutputContainsAny(output, @[@"sub-process /usr/bin/dpkg returned an error code", @"dpkg: error", @"dependency problems - leaving unconfigured"])) return @"R32-DPKG";
+    return @"R32-APT";
 }
 
 static NSDictionary *ATMRestoreRun(NSString *tool, NSArray<NSString *> *arguments) {
@@ -230,12 +230,21 @@ static NSDictionary *ATMRestoreVerifiedPayload(ATMEnvironment *environment, NSDi
         [requestedItems addObject:@{ @"packageID": packageID, @"version": version, @"source": @"repository" }];
     }
     if (![holdCheck[@"success"] boolValue]) { prerequisiteFailures++; blockedCount++; }
+    NSUInteger embeddedRequestCount = 0, repositoryRequestCount = 0;
+    for (NSDictionary *item in requestedItems) {
+        if ([item[@"source"] isEqualToString:@"embedded"]) embeddedRequestCount++;
+        else if ([item[@"source"] isEqualToString:@"repository"]) repositoryRequestCount++;
+    }
+    BOOL mixedRequestSources = embeddedRequestCount > 0 && repositoryRequestCount > 0;
+    if (mixedRequestSources) { prerequisiteFailures++; blockedCount++; }
+    BOOL embeddedOnly = requests.count > 0 && embeddedRequestCount == requests.count;
     NSString *aptGet = ATMRestoreExecutable(self.environment, @[@"/usr/bin/apt-get", @"/bin/apt-get"]);
     BOOL attempted = aptGet.length && blockedCount == 0;
     __block NSUInteger installActions = 0, configureActions = 0, removalActions = 0, unexpectedActions = 0, errorLines = 0;
     NSInteger exitCode = -1;
     if (attempted) {
-        NSMutableArray *arguments = [@[@"--simulate", @"--no-remove", @"--assume-no", @"--no-install-recommends", @"-o", @"APT::Get::AllowUnauthenticated=false", @"-o", @"Acquire::AllowInsecureRepositories=false", @"-o", @"Debug::NoLocking=true"] mutableCopy];
+        NSString *authenticationPolicy = embeddedOnly ? @"APT::Get::AllowUnauthenticated=true" : @"APT::Get::AllowUnauthenticated=false";
+        NSMutableArray *arguments = [@[@"--simulate", @"--no-remove", @"--assume-no", @"--no-install-recommends", @"-o", authenticationPolicy, @"-o", @"Acquire::AllowInsecureRepositories=false", @"-o", @"Debug::NoLocking=true"] mutableCopy];
         if (requests.count) { [arguments addObject:@"install"]; [arguments addObjectsFromArray:requests]; }
         else [arguments addObject:@"check"];
         NSMutableDictionary<NSString *, NSString *> *requestedVersions = [NSMutableDictionary dictionary];
@@ -264,10 +273,11 @@ static NSDictionary *ATMRestoreVerifiedPayload(ATMEnvironment *environment, NSDi
         (alreadySatisfied && newerVersionsKept ? @"All required packages are installed. Newer installed versions will be kept." :
         (alreadySatisfied ? @"All backup package versions are installed and the safety check passed." :
         @"The restore preview completed safely without removals.")))));
-    NSDictionary *executionSnapshot = @{ @"items": [requestedItems copy], @"blocked": @(blockedCount), @"installActions": @(installActions), @"configureActions": @(configureActions), @"removalActions": @(removalActions), @"unexpectedActions": @(unexpectedActions), @"simulationPassed": @(simulationPassed) };
+    NSDictionary *executionSnapshot = @{ @"items": [requestedItems copy], @"embeddedOnly": @(embeddedOnly), @"mixedRequestSources": @(mixedRequestSources), @"blocked": @(blockedCount), @"installActions": @(installActions), @"configureActions": @(configureActions), @"removalActions": @(removalActions), @"unexpectedActions": @(unexpectedActions), @"simulationPassed": @(simulationPassed) };
     return @{ @"packageCount": @(packages.count), @"alreadyInstalled": @(alreadyInstalled), @"missing": @(missing), @"versionChanges": @(versionChanges), @"updatesNeeded": @(updatesNeeded), @"newerVersionsKept": @(newerVersionsKept),
               @"exactPayloads": @(payloads), @"payloadUnavailable": @(unavailablePayloads), @"held": @(heldCount), @"blocked": @(blockedCount),
               @"protectedOrInvalid": @(protectedOrInvalid), @"metadataUnavailable": @(metadataUnavailable), @"prerequisiteFailures": @(prerequisiteFailures),
+              @"embeddedRequests": @(embeddedRequestCount), @"repositoryRequests": @(repositoryRequestCount), @"mixedRequestSources": @(mixedRequestSources),
               @"holdCheckPassed": holdCheck[@"success"],
               @"simulationAttempted": @(attempted), @"simulationPassed": @(simulationPassed), @"aptExitCode": @(exitCode),
               @"installActions": @(installActions), @"configureActions": @(configureActions), @"removalActions": @(removalActions), @"unexpectedActions": @(unexpectedActions),
@@ -297,13 +307,15 @@ static NSDictionary *ATMRestoreVerifiedPayload(ATMEnvironment *environment, NSDi
         return nil;
     }
     NSArray<NSString *> *requests = currentPlan[@"executionRequests"];
+    BOOL embeddedOnly = [currentPlan[@"executionSnapshot"][@"embeddedOnly"] boolValue];
     NSString *aptGet = ATMRestoreExecutable(self.environment, @[@"/usr/bin/apt-get", @"/bin/apt-get"]);
     if (!aptGet.length || !requests.count) {
         if (error) *error = ATMRestorePlanError(76, @"The approved package-manager action is unavailable.");
         return nil;
     }
+    NSString *authenticationPolicy = embeddedOnly ? @"APT::Get::AllowUnauthenticated=true" : @"APT::Get::AllowUnauthenticated=false";
     NSMutableArray<NSString *> *arguments = [@[@"--no-remove", @"--yes", @"--no-install-recommends",
-        @"-o", @"APT::Get::AllowUnauthenticated=false",
+        @"-o", authenticationPolicy,
         @"-o", @"Acquire::AllowInsecureRepositories=false",
         @"-o", @"Acquire::AllowDowngradeToInsecureRepositories=false",
         @"-o", @"APT::Get::Allow-Downgrades=false",
@@ -327,8 +339,8 @@ static NSDictionary *ATMRestoreVerifiedPayload(ATMEnvironment *environment, NSDi
     NSUInteger remaining = requests.count - completed;
     BOOL postCheckPassed = !postScanError && postPlan && [postPlan[@"simulationPassed"] boolValue] && [postPlan[@"blocked"] unsignedIntegerValue] == 0 && remaining == 0;
     BOOL success = aptExitCode == 0 && postCheckPassed;
-    NSString *restoreCode = success ? @"R31-OK" :
-        (postScanError ? @"R31-POSTSCAN" : (aptExitCode != 0 ? ATMRestoreFailureCode(run) : @"R31-VERIFY"));
+    NSString *restoreCode = success ? @"R32-OK" :
+        (postScanError ? @"R32-POSTSCAN" : (aptExitCode != 0 ? ATMRestoreFailureCode(run) : @"R32-VERIFY"));
     NSString *reason = success ? @"Restore completed and the package state passed verification." :
         (postScanError ? @"Restore finished, but the final package-state verification was unavailable." :
         (aptExitCode != 0 ? @"The package manager stopped before Restore completed." : @"Restore stopped because the final package state did not match the approved plan."));
