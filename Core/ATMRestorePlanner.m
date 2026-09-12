@@ -99,20 +99,20 @@ static BOOL ATMRestoreOutputContainsAny(NSString *output, NSArray<NSString *> *n
 }
 
 static NSString *ATMRestoreFailureCode(NSDictionary *run) {
-    if ([run[@"personaError"] integerValue] != 0) return @"R36-PERSONA";
-    if ([run[@"spawnError"] integerValue] != 0) return @"R36-SPAWN";
-    if ([run[@"signal"] integerValue] != 0) return @"R36-SIGNAL";
+    if ([run[@"personaError"] integerValue] != 0) return @"R37-PERSONA";
+    if ([run[@"spawnError"] integerValue] != 0) return @"R37-SPAWN";
+    if ([run[@"signal"] integerValue] != 0) return @"R37-SIGNAL";
     NSString *output = [run[@"output"] isKindOfClass:NSString.class] ? run[@"output"] : @"";
-    if (ATMRestoreOutputContainsAny(output, @[@"could not get lock", @"unable to acquire the dpkg frontend lock", @"is another process using it"])) return @"R36-LOCK";
-    if (ATMRestoreOutputContainsAny(output, @[@"permission denied", @"operation not permitted", @"are you root"])) return @"R36-PRIVILEGE";
-    if (ATMRestoreOutputContainsAny(output, @[@"no space left on device", @"not enough free space", @"write error"] )) return @"R36-STORAGE";
-    if (ATMRestoreOutputContainsAny(output, @[@"unmet dependencies", @"held broken packages", @"dependency problems prevent configuration", @"dependency problems - leaving unconfigured"])) return @"R36-DEPENDENCY";
-    if (ATMRestoreOutputContainsAny(output, @[@"sub-process /usr/bin/dpkg returned an error code", @"dpkg: error"])) return @"R36-DPKG";
-    if (ATMRestoreOutputContainsAny(output, @[@"unable to fetch some archives", @"failed to fetch", @"file not found", @"cannot open file"])) return @"R36-ARCHIVE";
-    if (ATMRestoreOutputContainsAny(output, @[@"repository is not signed", @"does not have a release file"])) return @"R36-SOURCE-AUTH";
-    if (ATMRestoreOutputContainsAny(output, @[@"temporary failure resolving", @"could not resolve", @"connection failed", @"network is unreachable"])) return @"R36-NETWORK";
-    if (ATMRestoreOutputContainsAny(output, @[@"there were unauthenticated packages", @"the following packages cannot be authenticated", @"unauthenticated packages and -y was used"])) return @"R36-AUTH";
-    return @"R36-APT";
+    if (ATMRestoreOutputContainsAny(output, @[@"could not get lock", @"unable to acquire the dpkg frontend lock", @"is another process using it"])) return @"R37-LOCK";
+    if (ATMRestoreOutputContainsAny(output, @[@"permission denied", @"operation not permitted", @"are you root"])) return @"R37-PRIVILEGE";
+    if (ATMRestoreOutputContainsAny(output, @[@"no space left on device", @"not enough free space", @"write error"] )) return @"R37-STORAGE";
+    if (ATMRestoreOutputContainsAny(output, @[@"unmet dependencies", @"held broken packages", @"dependency problems prevent configuration", @"dependency problems - leaving unconfigured"])) return @"R37-DEPENDENCY";
+    if (ATMRestoreOutputContainsAny(output, @[@"sub-process /usr/bin/dpkg returned an error code", @"dpkg: error"])) return @"R37-DPKG";
+    if (ATMRestoreOutputContainsAny(output, @[@"unable to fetch some archives", @"failed to fetch", @"file not found", @"cannot open file"])) return @"R37-ARCHIVE";
+    if (ATMRestoreOutputContainsAny(output, @[@"repository is not signed", @"does not have a release file"])) return @"R37-SOURCE-AUTH";
+    if (ATMRestoreOutputContainsAny(output, @[@"temporary failure resolving", @"could not resolve", @"connection failed", @"network is unreachable"])) return @"R37-NETWORK";
+    if (ATMRestoreOutputContainsAny(output, @[@"there were unauthenticated packages", @"the following packages cannot be authenticated", @"unauthenticated packages and -y was used"])) return @"R37-AUTH";
+    return @"R37-APT";
 }
 
 static NSDictionary *ATMRestoreRun(NSString *tool, NSArray<NSString *> *arguments) {
@@ -206,6 +206,14 @@ static NSDictionary *ATMRestoreVerifiedPayload(ATMEnvironment *environment, NSDi
         } else missing++;
         if ([held containsObject:packageID]) { heldCount++; blockedCount++; continue; }
         if ([package[@"debStatus"] isEqualToString:@"exact-cache"] && [package[@"sha256"] isKindOfClass:NSString.class] && [package[@"sha256"] length] == 64) payloads++; else unavailablePayloads++;
+        NSString *identity = [NSString stringWithFormat:@"%@\n%@", packageID, version];
+        NSDictionary *verifiedPayload = ATMRestoreVerifiedPayload(self.environment, exactPayloads[identity], packageID, version);
+        if (verifiedPayload) {
+            NSURL *payloadURL = verifiedPayload[@"url"];
+            [requests addObject:payloadURL.path];
+            [requestedItems addObject:@{ @"packageID": packageID, @"version": version, @"source": @"embedded" }];
+            continue;
+        }
         NSString *request = [NSString stringWithFormat:@"%@=%@", packageID, version];
         NSDictionary *metadataResult = aptCache.length ? ATMRestoreRun(aptCache, @[@"show", request]) : @{};
         NSArray *metadataParagraphs = ATMParseDebianParagraphs(metadataResult[@"output"]);
@@ -221,13 +229,7 @@ static NSDictionary *ATMRestoreVerifiedPayload(ATMEnvironment *environment, NSDi
         BOOL metadataProtected = [metadataEssential isEqualToString:@"yes"] ||
             [@[@"required", @"important"] containsObject:metadataPriority] || [protected containsObject:metadataPackage.lowercaseString];
         if (!metadataValid) {
-            NSString *identity = [NSString stringWithFormat:@"%@\n%@", packageID, version];
-            NSDictionary *verifiedPayload = ATMRestoreVerifiedPayload(self.environment, exactPayloads[identity], packageID, version);
-            if (!verifiedPayload) { metadataUnavailable++; blockedCount++; continue; }
-            NSURL *payloadURL = verifiedPayload[@"url"];
-            [requests addObject:payloadURL.path];
-            [requestedItems addObject:@{ @"packageID": packageID, @"version": version, @"source": @"embedded" }];
-            continue;
+            metadataUnavailable++; blockedCount++; continue;
         }
         if (metadataProtected) { protectedOrInvalid++; blockedCount++; continue; }
         [requests addObject:request];
@@ -352,7 +354,7 @@ static NSDictionary *ATMRestoreVerifiedPayload(ATMEnvironment *environment, NSDi
             preflightConfigureActions <= requests.count && preflightRemovalActions == 0 &&
             preflightUnexpectedActions == 0 && preflightErrorLines == 0;
         if (!preflightPassed) {
-            NSString *preflightCode = @"R36-APT-PREFLIGHT";
+            NSString *preflightCode = @"R37-APT-PREFLIGHT";
             return @{ @"success": @NO, @"requested": @(requests.count), @"completed": @0, @"remaining": @(requests.count),
                       @"aptExitCode": @(preflightExitCode), @"restoreCode": preflightCode, @"postCheckPassed": @NO,
                       @"removalsAllowed": @NO, @"downgradesAllowed": @NO, @"sourcesChanged": @NO,
@@ -369,7 +371,7 @@ static NSDictionary *ATMRestoreVerifiedPayload(ATMEnvironment *environment, NSDi
         NSInteger dpkgPreflightExitCode = [dpkgPreflightRun[@"exitCode"] integerValue];
         if (dpkgPreflightExitCode != 0) {
             return @{ @"success": @NO, @"requested": @(requests.count), @"completed": @0, @"remaining": @(requests.count),
-                      @"aptExitCode": @(dpkgPreflightExitCode), @"restoreCode": @"R36-DPKG-PREFLIGHT", @"postCheckPassed": @NO,
+                      @"aptExitCode": @(dpkgPreflightExitCode), @"restoreCode": @"R37-DPKG-PREFLIGHT", @"postCheckPassed": @NO,
                       @"removalsAllowed": @NO, @"downgradesAllowed": @NO, @"sourcesChanged": @NO,
                       @"rollbackEvidence": @{ @"preRestoreRequestCount": @(requests.count), @"postRestoreRequestCount": @(requests.count), @"identitiesIncluded": @NO },
                       @"reason": @"Restore stopped because the verified local packages did not pass the dpkg no-action check." };
@@ -401,11 +403,11 @@ static NSDictionary *ATMRestoreVerifiedPayload(ATMEnvironment *environment, NSDi
     NSUInteger remaining = requests.count - completed;
     BOOL postCheckPassed = !postScanError && postPlan && [postPlan[@"simulationPassed"] boolValue] && [postPlan[@"blocked"] unsignedIntegerValue] == 0 && remaining == 0;
     BOOL success = aptExitCode == 0 && postCheckPassed;
-    NSString *failureCode = aptExitCode != 0 ? ATMRestoreFailureCode(run) : @"R36-VERIFY";
-    if (embeddedOnly && [@[@"R36-AUTH", @"R36-SOURCE-AUTH", @"R36-NETWORK", @"R36-APT"] containsObject:failureCode]) failureCode = @"R36-DPKG";
-    if (aptExitCode != 0 && completed > 0) failureCode = @"R36-PARTIAL";
-    NSString *restoreCode = success ? @"R36-OK" :
-        (postScanError ? @"R36-POSTSCAN" : failureCode);
+    NSString *failureCode = aptExitCode != 0 ? ATMRestoreFailureCode(run) : @"R37-VERIFY";
+    if (embeddedOnly && [@[@"R37-AUTH", @"R37-SOURCE-AUTH", @"R37-NETWORK", @"R37-APT"] containsObject:failureCode]) failureCode = @"R37-DPKG";
+    if (aptExitCode != 0 && completed > 0) failureCode = @"R37-PARTIAL";
+    NSString *restoreCode = success ? @"R37-OK" :
+        (postScanError ? @"R37-POSTSCAN" : failureCode);
     NSString *reason = success ? @"Restore completed and the package state passed verification." :
         (postScanError ? @"Restore finished, but the final package-state verification was unavailable." :
         (aptExitCode != 0 ? @"The package manager stopped before Restore completed." : @"Restore stopped because the final package state did not match the approved plan."));

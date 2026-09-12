@@ -378,6 +378,8 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
         ] },
         @{ @"title": @"RESTORE PREVIEW", @"items": @[
             [self readinessItem:@"Result" value:passed ? @"Passed" : ([self.plan[@"simulationAttempted"] boolValue] ? @"Blocked" : @"Not Started") symbol:passed ? @"checkmark.shield.fill" : @"exclamationmark.shield.fill" color:passed ? good : warning],
+            [self readinessItem:@"Embedded DEBs" value:self.plan[@"embeddedRequests"] symbol:@"archivebox.fill" color:[self.plan[@"embeddedRequests"] unsignedIntegerValue] ? good : neutral],
+            [self readinessItem:@"Repository Packages" value:self.plan[@"repositoryRequests"] symbol:@"network" color:[self.plan[@"repositoryRequests"] unsignedIntegerValue] ? warning : good],
             [self readinessItem:@"Packages to Install" value:self.plan[@"installActions"] symbol:@"plus.circle.fill" color:neutral],
             [self readinessItem:@"Packages to Configure" value:self.plan[@"configureActions"] symbol:@"gearshape.fill" color:neutral],
             [self readinessItem:@"Packages to Remove" value:self.plan[@"removalActions"] symbol:@"minus.circle.fill" color:[self.plan[@"removalActions"] unsignedIntegerValue] ? UIColor.systemRedColor : good]
@@ -586,7 +588,8 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
 }
 - (void)confirmRestoreManifest:(NSDictionary *)manifest plan:(NSDictionary *)plan {
     if (![plan[@"safeToExecute"] boolValue]) return;
-    NSString *message = [NSString stringWithFormat:@"Install %@ approved package action(s)?\n\nThe plan will be rechecked immediately. Restore will stop on any drift, removal, downgrade, hold, protected package, unavailable exact package, unexpected dependency action, or insecure repository. Sources will not be changed.", [plan[@"executionRequests"] count] ? @([plan[@"executionRequests"] count]) : @0];
+    NSString *mode = [plan[@"embeddedRequests"] unsignedIntegerValue] == [plan[@"executionRequests"] count] ? @"verified DEBs embedded in this backup" : @"authenticated repositories";
+    NSString *message = [NSString stringWithFormat:@"Install %@ approved package action(s) using %@?\n\nThe plan will be rechecked immediately. Restore will stop on any drift, removal, downgrade, hold, protected package, unavailable exact package, unexpected dependency action, or insecure repository. Sources will not be changed.", [plan[@"executionRequests"] count] ? @([plan[@"executionRequests"] count]) : @0, mode];
     UIAlertController *confirmation = [UIAlertController alertControllerWithTitle:@"Final Restore Confirmation" message:message preferredStyle:UIAlertControllerStyleAlert];
     [confirmation addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(__unused UIAlertAction *action) { [ATMAppModel.shared.backupManager discardRestoreSession]; }]];
     __weak typeof(self) weakSelf = self;
@@ -600,7 +603,7 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
                 [progress dismissViewControllerAnimated:YES completion:^{
                     if (!result) { ATMShowError(weakSelf, @"Restore did not start", error); return; }
                     BOOL success = [result[@"success"] boolValue];
-                    NSString *detail = [NSString stringWithFormat:@"%@\n\nRestore code: %@\nPackage-manager exit: %@\nRequested: %@\nCompleted: %@\nRemaining: %@\nFinal verification: %@\nPackages removed: 0\nSources changed: No", result[@"reason"] ?: @"Restore stopped.", result[@"restoreCode"] ?: @"R36-UNKNOWN", result[@"aptExitCode"] ?: @(-1), result[@"requested"] ?: @0, result[@"completed"] ?: @0, result[@"remaining"] ?: @0, [result[@"postCheckPassed"] boolValue] ? @"Passed" : @"Not passed"];
+                    NSString *detail = [NSString stringWithFormat:@"%@\n\nRestore code: %@\nPackage-manager exit: %@\nRequested: %@\nCompleted: %@\nRemaining: %@\nFinal verification: %@\nPackages removed: 0\nSources changed: No", result[@"reason"] ?: @"Restore stopped.", result[@"restoreCode"] ?: @"R37-UNKNOWN", result[@"aptExitCode"] ?: @(-1), result[@"requested"] ?: @0, result[@"completed"] ?: @0, result[@"remaining"] ?: @0, [result[@"postCheckPassed"] boolValue] ? @"Passed" : @"Not passed"];
                     UIAlertController *summary = [UIAlertController alertControllerWithTitle:success ? @"Restore Completed" : @"Restore Needs Attention" message:detail preferredStyle:UIAlertControllerStyleAlert];
                     [summary addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleDefault handler:nil]];
                     [weakSelf presentViewController:summary animated:YES completion:nil];
@@ -783,7 +786,7 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
     else if ([event isEqualToString:@"profile-renamed"]) { title = @"Selection Profile Renamed"; summary = @"The saved package selection was preserved"; symbol = @"pencil.circle.fill"; }
     else if ([event isEqualToString:@"profile-duplicated"]) { title = @"Selection Profile Duplicated"; summary = [NSString stringWithFormat:@"%@ packages copied to a new profile", details[@"count"] ?: @0]; symbol = @"plus.square.on.square"; }
     else if ([event isEqualToString:@"restore-completed"]) { title = @"Restore Completed"; summary = [NSString stringWithFormat:@"%@ package actions completed • final check passed", details[@"completed"] ?: @0]; symbol = @"checkmark.shield.fill"; }
-    else if ([event isEqualToString:@"restore-stopped"]) { title = @"Restore Stopped"; summary = [NSString stringWithFormat:@"%@ completed • %@ remaining • %@", details[@"completed"] ?: @0, details[@"remaining"] ?: @0, details[@"restoreCode"] ?: @"R36-UNKNOWN"]; symbol = @"exclamationmark.shield.fill"; }
+    else if ([event isEqualToString:@"restore-stopped"]) { title = @"Restore Stopped"; summary = [NSString stringWithFormat:@"%@ completed • %@ remaining • %@", details[@"completed"] ?: @0, details[@"remaining"] ?: @0, details[@"restoreCode"] ?: @"R37-UNKNOWN"]; symbol = @"exclamationmark.shield.fill"; }
     NSDate *date = ATMDateFromISO(item[@"timestamp"]);
     static NSDateFormatter *timeFormatter; static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{ timeFormatter = [NSDateFormatter new]; timeFormatter.dateStyle = NSDateFormatterNoStyle; timeFormatter.timeStyle = NSDateFormatterShortStyle; });

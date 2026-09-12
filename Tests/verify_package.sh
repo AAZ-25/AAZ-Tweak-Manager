@@ -19,7 +19,7 @@ case "$phase" in
   metadata)
     test -f "$deb"
     test "$(dpkg-deb -f "$deb" Package)" = "com.aaz.tweakmanager"
-    test "$(dpkg-deb -f "$deb" Version)" = "0.1.0~beta36"
+    test "$(dpkg-deb -f "$deb" Version)" = "0.1.0~beta37"
     test "$(dpkg-deb -f "$deb" Architecture)" = "iphoneos-arm64"
     dpkg-deb -c "$deb" > "$package_list"
     ;;
@@ -65,10 +65,10 @@ assert extension_entitlements == {
     "application-identifier": "com.aaz.tweakmanager.importer",
     "com.apple.security.application-groups": ["group.com.aaz.tweakmanager"],
 }
-assert app_info["CFBundleVersion"] == "36"
+assert app_info["CFBundleVersion"] == "37"
 assert "CFBundleDocumentTypes" not in app_info
 assert extension_info["CFBundleIdentifier"] == "com.aaz.tweakmanager.importer"
-assert extension_info["CFBundleVersion"] == "36"
+assert extension_info["CFBundleVersion"] == "37"
 definition = extension_info["NSExtension"]
 assert definition["NSExtensionPointIdentifier"] == "com.apple.share-services"
 assert definition["NSExtensionPrincipalClass"] == "AAZShareViewController"
@@ -100,15 +100,18 @@ PY
     grep -Fq 'Final Restore Confirmation' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'The Restore plan changed after confirmation' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'DPkg::Lock::Timeout=30' "$RUNNER_TEMP/aaz-app.strings"
-    grep -Fq 'R36-READINESS' "$RUNNER_TEMP/aaz-app.strings"
-    grep -Fq 'R36-BLOCKED' "$RUNNER_TEMP/aaz-app.strings"
-    grep -Fq 'R36-APT-PREFLIGHT' "$RUNNER_TEMP/aaz-app.strings"
-    grep -Fq 'R36-OK' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'R37-READINESS' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'R37-BLOCKED' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'R37-APT-PREFLIGHT' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'R37-OK' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq -- '--no-act' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq -- '--refuse-downgrade' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq -- '--install' "$RUNNER_TEMP/aaz-app.strings"
-    grep -Fq 'R36-DPKG-PREFLIGHT' "$RUNNER_TEMP/aaz-app.strings"
-    grep -Fq 'R36-PARTIAL' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'R37-DPKG-PREFLIGHT' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'R37-PARTIAL' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'Embedded DEBs' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'Repository Packages' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'verified DEBs embedded in this backup' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'APT::Get::AllowUnauthenticated=true' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'APT::Get::AllowUnauthenticated=false' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'AAZTweakManagerRestore' "$RUNNER_TEMP/aaz-app.strings"
