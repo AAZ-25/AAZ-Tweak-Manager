@@ -22,7 +22,7 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "32"
+assert info["CFBundleVersion"] == "33"
 assert info["LSSupportsOpeningDocumentsInPlace"] is False
 assert "CFBundleDocumentTypes" not in info
 
@@ -42,7 +42,7 @@ assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["Ap
 with (ROOT / "Extension/Resources/Info.plist").open("rb") as handle:
     extension_info = plistlib.load(handle)
 assert extension_info["CFBundleIdentifier"] == "com.aaz.tweakmanager.importer"
-assert extension_info["CFBundleVersion"] == "32"
+assert extension_info["CFBundleVersion"] == "33"
 assert extension_info["CFBundlePackageType"] == "XPC!"
 extension_definition = extension_info["NSExtension"]
 assert extension_definition["NSExtensionPointIdentifier"] == "com.apple.share-services"
@@ -60,7 +60,7 @@ assert extension_entitlements == {
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta32" in control
+assert "Version: 0.1.0~beta33" in control
 assert "Priority: optional" in control
 
 excluded_directories = {".git", ".theos-build", "packages"}
@@ -80,7 +80,7 @@ all_text = "\n".join(
 for forbidden in [
     r"apt(?:-get)?\s+.*\b(?:install|remove|purge|autoremove)\b",
     r"dpkg\s+(?:-i|--install|--remove|--purge)",
-    r"--allow-remove-essential", r"--force-yes", r"--allow-unauthenticated",
+    r"--allow-remove-essential", r"--force-yes",
     r"auth\.conf.*(?:copy|archive|backup)",
 ]:
     assert not re.search(forbidden, all_text, re.I), f"unsafe restore behavior: {forbidden}"
@@ -182,7 +182,7 @@ for required_restore_guard in (
 for forbidden_restore_behavior in (
     '@"-y"', '@"--allow-downgrades"',
     '@"--allow-remove-essential"', '@"--allow-change-held-packages"',
-    '@"--allow-unauthenticated"', '@"--force-yes"',
+    '@"--force-yes"',
 ):
     assert forbidden_restore_behavior not in restore_planner_text, f"unsafe restore option: {forbidden_restore_behavior}"
 for required_restore_policy in (
@@ -197,8 +197,8 @@ for required_executor_guard in (
     '@"Acquire::AllowDowngradeToInsecureRepositories=false"',
     '@"APT::Get::Allow-Downgrades=false"',
     '@"DPkg::Lock::Timeout=30"',
-    '"R32-PERSONA"', '"R32-SPAWN"', '"R32-LOCK"', '"R32-PRIVILEGE"',
-    '"R32-AUTH"', '"R32-NETWORK"', '"R32-DPKG"', '"R32-APT"',
+    '"R33-PERSONA"', '"R33-SPAWN"', '"R33-LOCK"', '"R33-PRIVILEGE"',
+    '"R33-AUTH"', '"R33-SOURCE-AUTH"', '"R33-NETWORK"', '"R33-DPKG"', '"R33-APT"',
     '@"The Restore plan changed after confirmation.',
     '@"sourcesChanged": @NO', '@"removalsAllowed": @NO', '@"downgradesAllowed": @NO',
     '@"identitiesIncluded": @NO',
@@ -210,13 +210,15 @@ for required_embedded_guard in (
     'ATMRestoreVerifiedPayload', '@"--field"', 'ATMSHA256ForFile',
     '256ULL * 1024ULL * 1024ULL', '@"source": @"embedded"',
     '@"items": [requestedItems copy]', 'restoreSessionID',
-    '@"R32-READINESS"', '@"R32-READY"', '@"R32-BLOCKED"',
+    '@"R33-READINESS"', '@"R33-READY"', '@"R33-BLOCKED"',
     'prepareRestoreSessionForBackupURL', 'AAZTweakManagerRestore',
     '1024ULL * 1024ULL * 1024ULL', 'restoreReadinessForBackupURL',
 ):
     assert required_embedded_guard in all_text, f"missing embedded restore guard: {required_embedded_guard}"
 assert 'executionSnapshot = @{ @"requests"' not in restore_planner_text
 assert restore_planner_text.count('@"--yes"') == 1
+assert restore_planner_text.count('@"--allow-unauthenticated"') == 1
+assert restore_planner_text.count('@"--no-download"') == 1
 for required_local_auth_guard in (
     'BOOL mixedRequestSources = embeddedRequestCount > 0 && repositoryRequestCount > 0',
     'if (mixedRequestSources) { prerequisiteFailures++; blockedCount++; }',
@@ -225,6 +227,13 @@ for required_local_auth_guard in (
     '@"embeddedOnly": @(embeddedOnly)', '@"mixedRequestSources": @(mixedRequestSources)',
 ):
     assert required_local_auth_guard in restore_planner_text, f"missing local authentication guard: {required_local_auth_guard}"
+for required_privileged_preflight in (
+    'if (embeddedOnly) {', '@[@"--allow-unauthenticated", @"--no-download"',
+    'ATMRestoreRunWithPrivilege(aptGet, preflightArguments, YES)',
+    'preflightInstallActions == requests.count', 'preflightRemovalActions == 0',
+    'preflightUnexpectedActions == 0', '@"R33-PREFLIGHT"',
+):
+    assert required_privileged_preflight in restore_planner_text, f"missing privileged preflight guard: {required_privileged_preflight}"
 assert "NSXPCConnection" not in all_text
 assert "setuid(" not in all_text
 assert "Final Restore Confirmation" in view_controller_text
