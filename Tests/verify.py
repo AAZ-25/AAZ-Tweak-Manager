@@ -22,7 +22,7 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "34"
+assert info["CFBundleVersion"] == "35"
 assert info["LSSupportsOpeningDocumentsInPlace"] is False
 assert "CFBundleDocumentTypes" not in info
 
@@ -42,7 +42,7 @@ assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["Ap
 with (ROOT / "Extension/Resources/Info.plist").open("rb") as handle:
     extension_info = plistlib.load(handle)
 assert extension_info["CFBundleIdentifier"] == "com.aaz.tweakmanager.importer"
-assert extension_info["CFBundleVersion"] == "34"
+assert extension_info["CFBundleVersion"] == "35"
 assert extension_info["CFBundlePackageType"] == "XPC!"
 extension_definition = extension_info["NSExtension"]
 assert extension_definition["NSExtensionPointIdentifier"] == "com.apple.share-services"
@@ -60,7 +60,7 @@ assert extension_entitlements == {
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta34" in control
+assert "Version: 0.1.0~beta35" in control
 assert "Priority: optional" in control
 
 excluded_directories = {".git", ".theos-build", "packages"}
@@ -198,9 +198,9 @@ for required_executor_guard in (
     '@"Acquire::AllowDowngradeToInsecureRepositories=false"',
     '@"APT::Get::Allow-Downgrades=false"',
     '@"DPkg::Lock::Timeout=30"',
-    '"R34-PERSONA"', '"R34-SPAWN"', '"R34-LOCK"', '"R34-PRIVILEGE"',
-    '"R34-STORAGE"', '"R34-DPKG"', '"R34-DEPENDENCY"', '"R34-ARCHIVE"',
-    '"R34-AUTH"', '"R34-SOURCE-AUTH"', '"R34-NETWORK"', '"R34-APT"',
+    '"R35-PERSONA"', '"R35-SPAWN"', '"R35-LOCK"', '"R35-PRIVILEGE"',
+    '"R35-STORAGE"', '"R35-DPKG"', '"R35-DPKG-PREFLIGHT"', '"R35-PARTIAL"', '"R35-DEPENDENCY"', '"R35-ARCHIVE"',
+    '"R35-AUTH"', '"R35-SOURCE-AUTH"', '"R35-NETWORK"', '"R35-APT"',
     '@"The Restore plan changed after confirmation.',
     '@"sourcesChanged": @NO', '@"removalsAllowed": @NO', '@"downgradesAllowed": @NO',
     '@"identitiesIncluded": @NO',
@@ -212,19 +212,23 @@ for required_embedded_guard in (
     'ATMRestoreVerifiedPayload', '@"--field"', 'ATMSHA256ForFile',
     '256ULL * 1024ULL * 1024ULL', '@"source": @"embedded"',
     '@"items": [requestedItems copy]', 'restoreSessionID',
-    '@"R34-READINESS"', '@"R34-READY"', '@"R34-BLOCKED"',
+    '@"R35-READINESS"', '@"R35-READY"', '@"R35-BLOCKED"',
     'prepareRestoreSessionForBackupURL', 'AAZTweakManagerRestore',
     '1024ULL * 1024ULL * 1024ULL', 'restoreReadinessForBackupURL',
 ):
     assert required_embedded_guard in all_text, f"missing embedded restore guard: {required_embedded_guard}"
 assert 'executionSnapshot = @{ @"requests"' not in restore_planner_text
 assert restore_planner_text.count('@"--yes"') == 1
-assert restore_planner_text.count('@"--allow-unauthenticated"') == 1
+assert restore_planner_text.count('@"--allow-unauthenticated"') == 0
 assert '@"--no-download"' not in restore_planner_text
-assert '@"APT::Get::Download=true"' in restore_planner_text
-assert '@"Acquire::Retries=0"' in restore_planner_text
-assert restore_planner_text.index('return @"R34-DPKG"') < restore_planner_text.index('return @"R34-AUTH"')
-assert restore_planner_text.index('return @"R34-ARCHIVE"') < restore_planner_text.index('return @"R34-AUTH"')
+assert '@"APT::Get::Download=true"' not in restore_planner_text
+assert '@"Acquire::Retries=0"' not in restore_planner_text
+assert '@[@"--no-act", @"--refuse-downgrade", @"--install"]' in restore_planner_text
+assert '@[@"--refuse-downgrade", @"--install"]' in restore_planner_text
+assert 'ATMRestoreRunWithPrivilege(dpkg, dpkgPreflightArguments, YES)' in restore_planner_text
+assert 'run = ATMRestoreRunWithPrivilege(dpkg, dpkgArguments, YES)' in restore_planner_text
+assert restore_planner_text.index('return @"R35-DPKG"') < restore_planner_text.index('return @"R35-AUTH"')
+assert restore_planner_text.index('return @"R35-ARCHIVE"') < restore_planner_text.index('return @"R35-AUTH"')
 for required_local_auth_guard in (
     'BOOL mixedRequestSources = embeddedRequestCount > 0 && repositoryRequestCount > 0',
     'if (mixedRequestSources) { prerequisiteFailures++; blockedCount++; }',
@@ -234,10 +238,11 @@ for required_local_auth_guard in (
 ):
     assert required_local_auth_guard in restore_planner_text, f"missing local authentication guard: {required_local_auth_guard}"
 for required_privileged_preflight in (
-    'if (embeddedOnly) {', '@[@"--allow-unauthenticated", @"-o", @"APT::Get::AllowUnauthenticated=true"',
+    'embeddedOnly ? @"APT::Get::AllowUnauthenticated=true" : @"APT::Get::AllowUnauthenticated=false"',
     'ATMRestoreRunWithPrivilege(aptGet, preflightArguments, YES)',
     'preflightInstallActions == requests.count', 'preflightRemovalActions == 0',
-    'preflightUnexpectedActions == 0', '@"R34-PREFLIGHT"',
+    'preflightUnexpectedActions == 0', '@"R35-PREFLIGHT"',
+    '@"R35-DPKG-PREFLIGHT"', '@"R35-PARTIAL"',
 ):
     assert required_privileged_preflight in restore_planner_text, f"missing privileged preflight guard: {required_privileged_preflight}"
 assert "NSXPCConnection" not in all_text
@@ -253,7 +258,7 @@ assert "Newer Versions Kept" in view_controller_text
 assert "Blocked Downgrades" not in view_controller_text
 assert 'result[@"output"]' not in view_controller_text
 assert "Restore code:" in view_controller_text
-assert "APT exit:" in view_controller_text
+assert "Package-manager exit:" in view_controller_text
 assert "ATMSetRestoreDiagnosticState" in all_text
 assert "restoreDiagnosticPrivacy=fixed-code-and-exit-only" in (ROOT / "Core/ATMCore.m").read_text()
 assert "No packages or sources were changed." in view_controller_text
