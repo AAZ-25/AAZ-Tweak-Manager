@@ -19,7 +19,7 @@ case "$phase" in
   metadata)
     test -f "$deb"
     test "$(dpkg-deb -f "$deb" Package)" = "com.aaz.tweakmanager"
-    test "$(dpkg-deb -f "$deb" Version)" = "0.1.0~beta33"
+    test "$(dpkg-deb -f "$deb" Version)" = "0.1.0~beta34"
     test "$(dpkg-deb -f "$deb" Architecture)" = "iphoneos-arm64"
     dpkg-deb -c "$deb" > "$package_list"
     ;;
@@ -65,10 +65,10 @@ assert extension_entitlements == {
     "application-identifier": "com.aaz.tweakmanager.importer",
     "com.apple.security.application-groups": ["group.com.aaz.tweakmanager"],
 }
-assert app_info["CFBundleVersion"] == "33"
+assert app_info["CFBundleVersion"] == "34"
 assert "CFBundleDocumentTypes" not in app_info
 assert extension_info["CFBundleIdentifier"] == "com.aaz.tweakmanager.importer"
-assert extension_info["CFBundleVersion"] == "33"
+assert extension_info["CFBundleVersion"] == "34"
 definition = extension_info["NSExtension"]
 assert definition["NSExtensionPointIdentifier"] == "com.apple.share-services"
 assert definition["NSExtensionPrincipalClass"] == "AAZShareViewController"
@@ -100,12 +100,13 @@ PY
     grep -Fq 'Final Restore Confirmation' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'The Restore plan changed after confirmation' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'DPkg::Lock::Timeout=30' "$RUNNER_TEMP/aaz-app.strings"
-    grep -Fq 'R33-READINESS' "$RUNNER_TEMP/aaz-app.strings"
-    grep -Fq 'R33-BLOCKED' "$RUNNER_TEMP/aaz-app.strings"
-    grep -Fq 'R33-PREFLIGHT' "$RUNNER_TEMP/aaz-app.strings"
-    grep -Fq 'R33-OK' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'R34-READINESS' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'R34-BLOCKED' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'R34-PREFLIGHT' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'R34-OK' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq -- '--allow-unauthenticated' "$RUNNER_TEMP/aaz-app.strings"
-    grep -Fq -- '--no-download' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'APT::Get::Download=true' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'Acquire::Retries=0' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'APT::Get::AllowUnauthenticated=true' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'APT::Get::AllowUnauthenticated=false' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'AAZTweakManagerRestore' "$RUNNER_TEMP/aaz-app.strings"
