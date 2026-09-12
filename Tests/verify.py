@@ -22,7 +22,7 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "35"
+assert info["CFBundleVersion"] == "36"
 assert info["LSSupportsOpeningDocumentsInPlace"] is False
 assert "CFBundleDocumentTypes" not in info
 
@@ -42,7 +42,7 @@ assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["Ap
 with (ROOT / "Extension/Resources/Info.plist").open("rb") as handle:
     extension_info = plistlib.load(handle)
 assert extension_info["CFBundleIdentifier"] == "com.aaz.tweakmanager.importer"
-assert extension_info["CFBundleVersion"] == "35"
+assert extension_info["CFBundleVersion"] == "36"
 assert extension_info["CFBundlePackageType"] == "XPC!"
 extension_definition = extension_info["NSExtension"]
 assert extension_definition["NSExtensionPointIdentifier"] == "com.apple.share-services"
@@ -60,7 +60,7 @@ assert extension_entitlements == {
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta35" in control
+assert "Version: 0.1.0~beta36" in control
 assert "Priority: optional" in control
 
 excluded_directories = {".git", ".theos-build", "packages"}
@@ -198,9 +198,9 @@ for required_executor_guard in (
     '@"Acquire::AllowDowngradeToInsecureRepositories=false"',
     '@"APT::Get::Allow-Downgrades=false"',
     '@"DPkg::Lock::Timeout=30"',
-    '"R35-PERSONA"', '"R35-SPAWN"', '"R35-LOCK"', '"R35-PRIVILEGE"',
-    '"R35-STORAGE"', '"R35-DPKG"', '"R35-DPKG-PREFLIGHT"', '"R35-PARTIAL"', '"R35-DEPENDENCY"', '"R35-ARCHIVE"',
-    '"R35-AUTH"', '"R35-SOURCE-AUTH"', '"R35-NETWORK"', '"R35-APT"',
+    '"R36-PERSONA"', '"R36-SPAWN"', '"R36-LOCK"', '"R36-PRIVILEGE"',
+    '"R36-STORAGE"', '"R36-DPKG"', '"R36-DPKG-PREFLIGHT"', '"R36-PARTIAL"', '"R36-DEPENDENCY"', '"R36-ARCHIVE"', '"R36-APT-PREFLIGHT"',
+    '"R36-AUTH"', '"R36-SOURCE-AUTH"', '"R36-NETWORK"', '"R36-APT"',
     '@"The Restore plan changed after confirmation.',
     '@"sourcesChanged": @NO', '@"removalsAllowed": @NO', '@"downgradesAllowed": @NO',
     '@"identitiesIncluded": @NO',
@@ -212,7 +212,7 @@ for required_embedded_guard in (
     'ATMRestoreVerifiedPayload', '@"--field"', 'ATMSHA256ForFile',
     '256ULL * 1024ULL * 1024ULL', '@"source": @"embedded"',
     '@"items": [requestedItems copy]', 'restoreSessionID',
-    '@"R35-READINESS"', '@"R35-READY"', '@"R35-BLOCKED"',
+    '@"R36-READINESS"', '@"R36-READY"', '@"R36-BLOCKED"',
     'prepareRestoreSessionForBackupURL', 'AAZTweakManagerRestore',
     '1024ULL * 1024ULL * 1024ULL', 'restoreReadinessForBackupURL',
 ):
@@ -227,8 +227,8 @@ assert '@[@"--no-act", @"--refuse-downgrade", @"--install"]' in restore_planner_
 assert '@[@"--refuse-downgrade", @"--install"]' in restore_planner_text
 assert 'ATMRestoreRunWithPrivilege(dpkg, dpkgPreflightArguments, YES)' in restore_planner_text
 assert 'run = ATMRestoreRunWithPrivilege(dpkg, dpkgArguments, YES)' in restore_planner_text
-assert restore_planner_text.index('return @"R35-DPKG"') < restore_planner_text.index('return @"R35-AUTH"')
-assert restore_planner_text.index('return @"R35-ARCHIVE"') < restore_planner_text.index('return @"R35-AUTH"')
+assert restore_planner_text.index('return @"R36-DPKG"') < restore_planner_text.index('return @"R36-AUTH"')
+assert restore_planner_text.index('return @"R36-ARCHIVE"') < restore_planner_text.index('return @"R36-AUTH"')
 for required_local_auth_guard in (
     'BOOL mixedRequestSources = embeddedRequestCount > 0 && repositoryRequestCount > 0',
     'if (mixedRequestSources) { prerequisiteFailures++; blockedCount++; }',
@@ -241,8 +241,8 @@ for required_privileged_preflight in (
     'embeddedOnly ? @"APT::Get::AllowUnauthenticated=true" : @"APT::Get::AllowUnauthenticated=false"',
     'ATMRestoreRunWithPrivilege(aptGet, preflightArguments, YES)',
     'preflightInstallActions == requests.count', 'preflightRemovalActions == 0',
-    'preflightUnexpectedActions == 0', '@"R35-PREFLIGHT"',
-    '@"R35-DPKG-PREFLIGHT"', '@"R35-PARTIAL"',
+    'preflightUnexpectedActions == 0', '@"R36-APT-PREFLIGHT"',
+    'if (!embeddedOnly) {', '@"R36-DPKG-PREFLIGHT"', '@"R36-PARTIAL"',
 ):
     assert required_privileged_preflight in restore_planner_text, f"missing privileged preflight guard: {required_privileged_preflight}"
 assert "NSXPCConnection" not in all_text
