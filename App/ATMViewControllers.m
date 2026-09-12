@@ -342,6 +342,7 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
 @property(nonatomic, copy) NSDictionary *plan;
 @property(nonatomic, copy) NSArray<NSDictionary *> *sections;
 @property(nonatomic, copy, nullable) dispatch_block_t restoreHandler;
+@property(nonatomic, copy, nullable) dispatch_block_t cancelHandler;
 - (instancetype)initWithPlan:(NSDictionary *)plan;
 @end
 
@@ -391,7 +392,7 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
     [NSLayoutConstraint activateConstraints:@[[icon.topAnchor constraintEqualToAnchor:header.topAnchor constant:14], [icon.centerXAnchor constraintEqualToAnchor:header.centerXAnchor], [icon.widthAnchor constraintEqualToConstant:44], [icon.heightAnchor constraintEqualToConstant:44], [headline.topAnchor constraintEqualToAnchor:icon.bottomAnchor constant:10], [headline.leadingAnchor constraintEqualToAnchor:header.leadingAnchor constant:20], [headline.trailingAnchor constraintEqualToAnchor:header.trailingAnchor constant:-20], [detail.topAnchor constraintEqualToAnchor:headline.bottomAnchor constant:6], [detail.leadingAnchor constraintEqualToAnchor:header.leadingAnchor constant:24], [detail.trailingAnchor constraintEqualToAnchor:header.trailingAnchor constant:-24]]];
     self.tableView.tableHeaderView = header;
 }
-- (void)closeReadiness { [self dismissViewControllerAnimated:YES completion:nil]; }
+- (void)closeReadiness { dispatch_block_t handler = self.cancelHandler; [self dismissViewControllerAnimated:YES completion:handler]; }
 - (void)requestRestore { if ([self.plan[@"safeToExecute"] boolValue] && self.restoreHandler) self.restoreHandler(); }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { (void)tableView; return self.sections.count; }
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { (void)tableView; return [self.sections[section][@"items"] count]; }
@@ -550,31 +551,32 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
 - (void)promptForPasswordWithTitle:(NSString *)title completion:(void (^)(NSString *password))completion { UIAlertController *alert = [UIAlertController alertControllerWithTitle:title message:@"The password is used only for this operation and is never stored." preferredStyle:UIAlertControllerStyleAlert]; [alert addTextFieldWithConfigurationHandler:^(UITextField *field) { field.placeholder = @"Password"; field.secureTextEntry = YES; }]; [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]]; [alert addAction:[UIAlertAction actionWithTitle:@"Continue" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) { completion(alert.textFields.firstObject.text ?: @""); }]]; [self presentViewController:alert animated:YES completion:nil]; }
 - (void)showBackup:(NSURL *)url password:(NSString *)password {
     UIAlertController *progress = [UIAlertController alertControllerWithTitle:@"Inspecting Backup" message:@"Checking archive structure, CRC values, and cached-DEB hashes…" preferredStyle:UIAlertControllerStyleAlert]; [self presentViewController:progress animated:YES completion:nil];
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ NSError *error = nil; NSDictionary *report = [ATMAppModel.shared.backupManager backupReportForURL:url password:password error:&error]; dispatch_async(dispatch_get_main_queue(), ^{ [progress dismissViewControllerAnimated:YES completion:^{ if (!report) { ATMShowError(self, @"Backup could not be inspected", error); return; } [self presentBackupReport:report forURL:url]; }]; }); });
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ NSError *error = nil; NSDictionary *report = [ATMAppModel.shared.backupManager backupReportForURL:url password:password error:&error]; dispatch_async(dispatch_get_main_queue(), ^{ [progress dismissViewControllerAnimated:YES completion:^{ if (!report) { ATMShowError(self, @"Backup could not be inspected", error); return; } [self presentBackupReport:report forURL:url password:password]; }]; }); });
 }
-- (void)presentBackupReport:(NSDictionary *)report forURL:(NSURL *)url {
+- (void)presentBackupReport:(NSDictionary *)report forURL:(NSURL *)url password:(NSString *)password {
     NSDictionary *manifest = report[@"manifest"]; NSMutableDictionary *installed = [NSMutableDictionary dictionary]; for (ATMPackageRecord *record in ATMAppModel.shared.packages) installed[record.packageID] = record.version;
     NSUInteger ready = 0, missing = 0, different = 0, unavailable = 0; for (NSDictionary *package in manifest[@"packages"]) { NSString *current = installed[package[@"packageID"] ?: @""]; if (!current) missing++; else if (![current isEqualToString:package[@"version"] ?: @""]) different++; else ready++; if ([package[@"debStatus"] isEqualToString:@"unavailable"]) unavailable++; }
     NSUInteger index = [self.backups indexOfObject:url]; NSURL *comparisonURL = (![report[@"encrypted"] boolValue] && index != NSNotFound && index + 1 < self.backups.count && ![ATMAppModel.shared.backupManager isEncryptedBackup:self.backups[index + 1]]) ? self.backups[index + 1] : nil;
     ATMBackupDetailsController *details = [[ATMBackupDetailsController alloc] initWithReport:report ready:ready missing:missing different:different unavailable:unavailable];
     __weak typeof(self) weakSelf = self; __weak ATMBackupDetailsController *weakDetails = details;
     details.shareHandler = ^{ [weakSelf shareURL:url]; };
-    details.checkPlanHandler = ^{ [weakDetails dismissViewControllerAnimated:YES completion:^{ [weakSelf checkRestorePlanForManifest:manifest]; }]; };
+    details.checkPlanHandler = ^{ [weakDetails dismissViewControllerAnimated:YES completion:^{ [weakSelf checkRestorePlanForManifest:manifest backupURL:url password:password]; }]; };
     if (comparisonURL) details.compareHandler = ^{ [weakDetails dismissViewControllerAnimated:YES completion:^{ [weakSelf compareBackup:comparisonURL with:url]; }]; };
     UINavigationController *navigation = [[UINavigationController alloc] initWithRootViewController:details]; navigation.modalPresentationStyle = UIModalPresentationFormSheet; [self presentViewController:navigation animated:YES completion:nil];
 }
-- (void)checkRestorePlanForManifest:(NSDictionary *)manifest {
+- (void)checkRestorePlanForManifest:(NSDictionary *)manifest backupURL:(NSURL *)backupURL password:(NSString *)password {
     UIAlertController *progress = [UIAlertController alertControllerWithTitle:@"Checking Restore Plan" message:@"Checking versions, protections, holds, and package-manager safety…" preferredStyle:UIAlertControllerStyleAlert];
     [self presentViewController:progress animated:YES completion:nil];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         NSError *error = nil;
-        NSDictionary *plan = [ATMAppModel.shared.backupManager restoreReadinessForManifest:manifest installedPackages:ATMAppModel.shared.packages error:&error];
+        NSDictionary *plan = [ATMAppModel.shared.backupManager restoreReadinessForBackupURL:backupURL password:password installedPackages:ATMAppModel.shared.packages error:&error];
         dispatch_async(dispatch_get_main_queue(), ^{
             [progress dismissViewControllerAnimated:YES completion:^{
                 if (!plan) { ATMShowError(self, @"Restore plan unavailable", error); return; }
                 ATMRestoreReadinessController *result = [[ATMRestoreReadinessController alloc] initWithPlan:plan];
                 __weak typeof(self) weakSelf = self; __weak ATMRestoreReadinessController *weakResult = result;
                 result.restoreHandler = ^{ [weakResult dismissViewControllerAnimated:YES completion:^{ [weakSelf confirmRestoreManifest:manifest plan:plan]; }]; };
+                result.cancelHandler = ^{ [ATMAppModel.shared.backupManager discardRestoreSession]; };
                 UINavigationController *navigation = [[UINavigationController alloc] initWithRootViewController:result];
                 navigation.modalPresentationStyle = UIModalPresentationFormSheet;
                 [self presentViewController:navigation animated:YES completion:nil];
@@ -584,9 +586,9 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
 }
 - (void)confirmRestoreManifest:(NSDictionary *)manifest plan:(NSDictionary *)plan {
     if (![plan[@"safeToExecute"] boolValue]) return;
-    NSString *message = [NSString stringWithFormat:@"Install %@ approved package action(s)?\n\nThe plan will be rechecked immediately. Restore will stop on any drift, removal, downgrade, hold, protected package, missing metadata, or insecure repository. Sources will not be changed.", [plan[@"executionRequests"] count] ? @([plan[@"executionRequests"] count]) : @0];
+    NSString *message = [NSString stringWithFormat:@"Install %@ approved package action(s)?\n\nThe plan will be rechecked immediately. Restore will stop on any drift, removal, downgrade, hold, protected package, unavailable exact package, unexpected dependency action, or insecure repository. Sources will not be changed.", [plan[@"executionRequests"] count] ? @([plan[@"executionRequests"] count]) : @0];
     UIAlertController *confirmation = [UIAlertController alertControllerWithTitle:@"Final Restore Confirmation" message:message preferredStyle:UIAlertControllerStyleAlert];
-    [confirmation addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [confirmation addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(__unused UIAlertAction *action) { [ATMAppModel.shared.backupManager discardRestoreSession]; }]];
     __weak typeof(self) weakSelf = self;
     [confirmation addAction:[UIAlertAction actionWithTitle:@"Restore Now" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *action) {
         UIAlertController *progress = [UIAlertController alertControllerWithTitle:@"Restoring Packages" message:@"Rechecking the approved plan, then installing without removals, downgrades, or source changes…" preferredStyle:UIAlertControllerStyleAlert];
@@ -598,7 +600,7 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
                 [progress dismissViewControllerAnimated:YES completion:^{
                     if (!result) { ATMShowError(weakSelf, @"Restore did not start", error); return; }
                     BOOL success = [result[@"success"] boolValue];
-                    NSString *detail = [NSString stringWithFormat:@"%@\n\nRestore code: %@\nAPT exit: %@\nRequested: %@\nCompleted: %@\nRemaining: %@\nFinal verification: %@\nPackages removed: 0\nSources changed: No", result[@"reason"] ?: @"Restore stopped.", result[@"restoreCode"] ?: @"R30-UNKNOWN", result[@"aptExitCode"] ?: @(-1), result[@"requested"] ?: @0, result[@"completed"] ?: @0, result[@"remaining"] ?: @0, [result[@"postCheckPassed"] boolValue] ? @"Passed" : @"Not passed"];
+                    NSString *detail = [NSString stringWithFormat:@"%@\n\nRestore code: %@\nAPT exit: %@\nRequested: %@\nCompleted: %@\nRemaining: %@\nFinal verification: %@\nPackages removed: 0\nSources changed: No", result[@"reason"] ?: @"Restore stopped.", result[@"restoreCode"] ?: @"R31-UNKNOWN", result[@"aptExitCode"] ?: @(-1), result[@"requested"] ?: @0, result[@"completed"] ?: @0, result[@"remaining"] ?: @0, [result[@"postCheckPassed"] boolValue] ? @"Passed" : @"Not passed"];
                     UIAlertController *summary = [UIAlertController alertControllerWithTitle:success ? @"Restore Completed" : @"Restore Needs Attention" message:detail preferredStyle:UIAlertControllerStyleAlert];
                     [summary addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleDefault handler:nil]];
                     [weakSelf presentViewController:summary animated:YES completion:nil];
@@ -781,7 +783,7 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
     else if ([event isEqualToString:@"profile-renamed"]) { title = @"Selection Profile Renamed"; summary = @"The saved package selection was preserved"; symbol = @"pencil.circle.fill"; }
     else if ([event isEqualToString:@"profile-duplicated"]) { title = @"Selection Profile Duplicated"; summary = [NSString stringWithFormat:@"%@ packages copied to a new profile", details[@"count"] ?: @0]; symbol = @"plus.square.on.square"; }
     else if ([event isEqualToString:@"restore-completed"]) { title = @"Restore Completed"; summary = [NSString stringWithFormat:@"%@ package actions completed • final check passed", details[@"completed"] ?: @0]; symbol = @"checkmark.shield.fill"; }
-    else if ([event isEqualToString:@"restore-stopped"]) { title = @"Restore Stopped"; summary = [NSString stringWithFormat:@"%@ completed • %@ remaining • %@", details[@"completed"] ?: @0, details[@"remaining"] ?: @0, details[@"restoreCode"] ?: @"R30-UNKNOWN"]; symbol = @"exclamationmark.shield.fill"; }
+    else if ([event isEqualToString:@"restore-stopped"]) { title = @"Restore Stopped"; summary = [NSString stringWithFormat:@"%@ completed • %@ remaining • %@", details[@"completed"] ?: @0, details[@"remaining"] ?: @0, details[@"restoreCode"] ?: @"R31-UNKNOWN"]; symbol = @"exclamationmark.shield.fill"; }
     NSDate *date = ATMDateFromISO(item[@"timestamp"]);
     static NSDateFormatter *timeFormatter; static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{ timeFormatter = [NSDateFormatter new]; timeFormatter.dateStyle = NSDateFormatterNoStyle; timeFormatter.timeStyle = NSDateFormatterShortStyle; });

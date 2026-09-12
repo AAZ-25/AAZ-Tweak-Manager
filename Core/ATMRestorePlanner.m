@@ -99,16 +99,16 @@ static BOOL ATMRestoreOutputContainsAny(NSString *output, NSArray<NSString *> *n
 }
 
 static NSString *ATMRestoreFailureCode(NSDictionary *run) {
-    if ([run[@"personaError"] integerValue] != 0) return @"R30-PERSONA";
-    if ([run[@"spawnError"] integerValue] != 0) return @"R30-SPAWN";
-    if ([run[@"signal"] integerValue] != 0) return @"R30-SIGNAL";
+    if ([run[@"personaError"] integerValue] != 0) return @"R31-PERSONA";
+    if ([run[@"spawnError"] integerValue] != 0) return @"R31-SPAWN";
+    if ([run[@"signal"] integerValue] != 0) return @"R31-SIGNAL";
     NSString *output = [run[@"output"] isKindOfClass:NSString.class] ? run[@"output"] : @"";
-    if (ATMRestoreOutputContainsAny(output, @[@"could not get lock", @"unable to acquire the dpkg frontend lock", @"is another process using it"])) return @"R30-LOCK";
-    if (ATMRestoreOutputContainsAny(output, @[@"permission denied", @"operation not permitted", @"are you root"])) return @"R30-PRIVILEGE";
-    if (ATMRestoreOutputContainsAny(output, @[@"unauthenticated packages", @"not signed", @"does not have a release file"])) return @"R30-AUTH";
-    if (ATMRestoreOutputContainsAny(output, @[@"temporary failure resolving", @"could not resolve", @"failed to fetch", @"connection failed", @"network is unreachable"])) return @"R30-NETWORK";
-    if (ATMRestoreOutputContainsAny(output, @[@"sub-process /usr/bin/dpkg returned an error code", @"dpkg: error", @"dependency problems - leaving unconfigured"])) return @"R30-DPKG";
-    return @"R30-APT";
+    if (ATMRestoreOutputContainsAny(output, @[@"could not get lock", @"unable to acquire the dpkg frontend lock", @"is another process using it"])) return @"R31-LOCK";
+    if (ATMRestoreOutputContainsAny(output, @[@"permission denied", @"operation not permitted", @"are you root"])) return @"R31-PRIVILEGE";
+    if (ATMRestoreOutputContainsAny(output, @[@"unauthenticated packages", @"not signed", @"does not have a release file"])) return @"R31-AUTH";
+    if (ATMRestoreOutputContainsAny(output, @[@"temporary failure resolving", @"could not resolve", @"failed to fetch", @"connection failed", @"network is unreachable"])) return @"R31-NETWORK";
+    if (ATMRestoreOutputContainsAny(output, @[@"sub-process /usr/bin/dpkg returned an error code", @"dpkg: error", @"dependency problems - leaving unconfigured"])) return @"R31-DPKG";
+    return @"R31-APT";
 }
 
 static NSDictionary *ATMRestoreRun(NSString *tool, NSArray<NSString *> *arguments) {
@@ -129,6 +129,32 @@ static NSDictionary *ATMRestoreHeldPackages(ATMEnvironment *environment) {
     return @{ @"available": @YES, @"success": @YES, @"packages": held };
 }
 
+static NSDictionary *ATMRestoreVerifiedPayload(ATMEnvironment *environment, NSDictionary *descriptor, NSString *packageID, NSString *version) {
+    NSURL *url = [descriptor[@"url"] isKindOfClass:NSURL.class] ? descriptor[@"url"] : nil;
+    NSURL *root = [descriptor[@"stagingRoot"] isKindOfClass:NSURL.class] ? descriptor[@"stagingRoot"] : nil;
+    NSString *expectedHash = [descriptor[@"sha256"] isKindOfClass:NSString.class] ? [descriptor[@"sha256"] lowercaseString] : @"";
+    NSString *rootPath = root.URLByStandardizingPath.path, *filePath = url.URLByStandardizingPath.path;
+    BOOL insideStaging = root.isFileURL && url.isFileURL && rootPath.length && filePath.length &&
+        [filePath hasPrefix:[rootPath stringByAppendingString:@"/"]];
+    NSNumber *fileSize = nil; [url getResourceValue:&fileSize forKey:NSURLFileSizeKey error:nil];
+    if (!insideStaging || ![NSFileManager.defaultManager isReadableFileAtPath:filePath] || fileSize.unsignedLongLongValue == 0 ||
+        fileSize.unsignedLongLongValue > 256ULL * 1024ULL * 1024ULL || expectedHash.length != 64 ||
+        ![ATMSHA256ForFile(url, nil).lowercaseString isEqualToString:expectedHash]) return nil;
+    NSString *dpkgDeb = ATMRestoreExecutable(environment, @[@"/usr/bin/dpkg-deb", @"/bin/dpkg-deb"]);
+    if (!dpkgDeb.length) return nil;
+    NSDictionary *run = ATMRestoreRun(dpkgDeb, @[@"--field", filePath]);
+    NSDictionary *fields = [run[@"exitCode"] integerValue] == 0 ? ATMParseDebianParagraph(run[@"output"] ?: @"") : nil;
+    NSString *actualPackage = [fields[@"Package"] isKindOfClass:NSString.class] ? fields[@"Package"] : @"";
+    NSString *actualVersion = [fields[@"Version"] isKindOfClass:NSString.class] ? fields[@"Version"] : @"";
+    NSString *architecture = [fields[@"Architecture"] isKindOfClass:NSString.class] ? fields[@"Architecture"] : @"";
+    NSString *priority = [fields[@"Priority"] isKindOfClass:NSString.class] ? [fields[@"Priority"] lowercaseString] : @"";
+    NSString *essential = [fields[@"Essential"] isKindOfClass:NSString.class] ? [fields[@"Essential"] lowercaseString] : @"no";
+    if (![actualPackage isEqualToString:packageID] || ![actualVersion isEqualToString:version] ||
+        (![@[@"iphoneos-arm64", @"all"] containsObject:architecture]) || [essential isEqualToString:@"yes"] ||
+        [@[@"required", @"important"] containsObject:priority] || [ATMProtectedPackageIDs() containsObject:actualPackage.lowercaseString]) return nil;
+    return @{ @"url": url, @"packageID": actualPackage, @"version": actualVersion, @"architecture": architecture };
+}
+
 @interface ATMRestorePlanner ()
 @property(nonatomic, strong) ATMEnvironment *environment;
 @end
@@ -136,7 +162,7 @@ static NSDictionary *ATMRestoreHeldPackages(ATMEnvironment *environment) {
 @implementation ATMRestorePlanner
 - (instancetype)initWithEnvironment:(ATMEnvironment *)environment { if ((self = [super init])) _environment = environment; return self; }
 
-- (NSDictionary *)planForManifest:(NSDictionary *)manifest installedPackages:(NSArray<ATMPackageRecord *> *)installed error:(NSError **)error {
+- (NSDictionary *)planForManifest:(NSDictionary *)manifest installedPackages:(NSArray<ATMPackageRecord *> *)installed exactPayloads:(NSDictionary<NSString *,NSDictionary *> *)exactPayloads error:(NSError **)error {
     if (!self.environment.supportedRootless || ![manifest[@"rootless"] boolValue] || ![manifest[@"architecture"] isEqualToString:@"iphoneos-arm64"]) {
         if (error) *error = ATMRestorePlanError(70, @"This backup does not match the supported Rootless target.");
         return nil;
@@ -150,6 +176,7 @@ static NSDictionary *ATMRestoreHeldPackages(ATMEnvironment *environment) {
     NSString *dpkg = ATMRestoreExecutable(self.environment, @[@"/usr/bin/dpkg", @"/bin/dpkg"]);
     NSString *aptCache = ATMRestoreExecutable(self.environment, @[@"/usr/bin/apt-cache", @"/bin/apt-cache"]);
     NSMutableArray<NSString *> *requests = [NSMutableArray array];
+    NSMutableArray<NSDictionary *> *requestedItems = [NSMutableArray array];
     NSUInteger alreadyInstalled = 0, missing = 0, versionChanges = 0, updatesNeeded = 0, newerVersionsKept = 0, payloads = 0, unavailablePayloads = 0, heldCount = 0, metadataUnavailable = 0, protectedOrInvalid = 0, prerequisiteFailures = 0, blockedCount = 0;
     for (id object in packages) {
         if (![object isKindOfClass:NSDictionary.class]) { protectedOrInvalid++; blockedCount++; continue; }
@@ -176,8 +203,7 @@ static NSDictionary *ATMRestoreHeldPackages(ATMEnvironment *environment) {
         if ([held containsObject:packageID]) { heldCount++; blockedCount++; continue; }
         if ([package[@"debStatus"] isEqualToString:@"exact-cache"] && [package[@"sha256"] isKindOfClass:NSString.class] && [package[@"sha256"] length] == 64) payloads++; else unavailablePayloads++;
         NSString *request = [NSString stringWithFormat:@"%@=%@", packageID, version];
-        if (!aptCache.length) { metadataUnavailable++; blockedCount++; continue; }
-        NSDictionary *metadataResult = ATMRestoreRun(aptCache, @[@"show", request]);
+        NSDictionary *metadataResult = aptCache.length ? ATMRestoreRun(aptCache, @[@"show", request]) : @{};
         NSArray *metadataParagraphs = ATMParseDebianParagraphs(metadataResult[@"output"]);
         NSDictionary *metadata = metadataParagraphs.firstObject;
         NSString *metadataPackage = [metadata[@"Package"] isKindOfClass:NSString.class] ? metadata[@"Package"] : @"";
@@ -190,9 +216,18 @@ static NSDictionary *ATMRestoreHeldPackages(ATMEnvironment *environment) {
             ([metadataArchitecture isEqualToString:@"iphoneos-arm64"] || [metadataArchitecture isEqualToString:@"all"]);
         BOOL metadataProtected = [metadataEssential isEqualToString:@"yes"] ||
             [@[@"required", @"important"] containsObject:metadataPriority] || [protected containsObject:metadataPackage.lowercaseString];
-        if (!metadataValid) { metadataUnavailable++; blockedCount++; continue; }
+        if (!metadataValid) {
+            NSString *identity = [NSString stringWithFormat:@"%@\n%@", packageID, version];
+            NSDictionary *verifiedPayload = ATMRestoreVerifiedPayload(self.environment, exactPayloads[identity], packageID, version);
+            if (!verifiedPayload) { metadataUnavailable++; blockedCount++; continue; }
+            NSURL *payloadURL = verifiedPayload[@"url"];
+            [requests addObject:payloadURL.path];
+            [requestedItems addObject:@{ @"packageID": packageID, @"version": version, @"source": @"embedded" }];
+            continue;
+        }
         if (metadataProtected) { protectedOrInvalid++; blockedCount++; continue; }
         [requests addObject:request];
+        [requestedItems addObject:@{ @"packageID": packageID, @"version": version, @"source": @"repository" }];
     }
     if (![holdCheck[@"success"] boolValue]) { prerequisiteFailures++; blockedCount++; }
     NSString *aptGet = ATMRestoreExecutable(self.environment, @[@"/usr/bin/apt-get", @"/bin/apt-get"]);
@@ -204,7 +239,7 @@ static NSDictionary *ATMRestoreHeldPackages(ATMEnvironment *environment) {
         if (requests.count) { [arguments addObject:@"install"]; [arguments addObjectsFromArray:requests]; }
         else [arguments addObject:@"check"];
         NSMutableDictionary<NSString *, NSString *> *requestedVersions = [NSMutableDictionary dictionary];
-        for (NSString *request in requests) { NSRange separator = [request rangeOfString:@"=" options:NSBackwardsSearch]; if (separator.location != NSNotFound) requestedVersions[[request substringToIndex:separator.location]] = [request substringFromIndex:separator.location + 1]; }
+        for (NSDictionary *item in requestedItems) requestedVersions[item[@"packageID"]] = item[@"version"];
         NSRegularExpression *actionExpression = [NSRegularExpression regularExpressionWithPattern:@"^(?:Inst|Conf) ([a-z0-9][a-z0-9+.-]*)(?: \\[[^\\]]*\\])? \\(([^ )]+)" options:0 error:nil];
         NSDictionary *result = ATMRestoreRun(aptGet, arguments); exitCode = [result[@"exitCode"] integerValue];
         [result[@"output"] enumerateLinesUsingBlock:^(NSString *line, BOOL *stop) {
@@ -229,18 +264,18 @@ static NSDictionary *ATMRestoreHeldPackages(ATMEnvironment *environment) {
         (alreadySatisfied && newerVersionsKept ? @"All required packages are installed. Newer installed versions will be kept." :
         (alreadySatisfied ? @"All backup package versions are installed and the safety check passed." :
         @"The restore preview completed safely without removals.")))));
-    NSDictionary *executionSnapshot = @{ @"requests": [requests copy], @"blocked": @(blockedCount), @"installActions": @(installActions), @"configureActions": @(configureActions), @"removalActions": @(removalActions), @"unexpectedActions": @(unexpectedActions), @"simulationPassed": @(simulationPassed) };
+    NSDictionary *executionSnapshot = @{ @"items": [requestedItems copy], @"blocked": @(blockedCount), @"installActions": @(installActions), @"configureActions": @(configureActions), @"removalActions": @(removalActions), @"unexpectedActions": @(unexpectedActions), @"simulationPassed": @(simulationPassed) };
     return @{ @"packageCount": @(packages.count), @"alreadyInstalled": @(alreadyInstalled), @"missing": @(missing), @"versionChanges": @(versionChanges), @"updatesNeeded": @(updatesNeeded), @"newerVersionsKept": @(newerVersionsKept),
               @"exactPayloads": @(payloads), @"payloadUnavailable": @(unavailablePayloads), @"held": @(heldCount), @"blocked": @(blockedCount),
               @"protectedOrInvalid": @(protectedOrInvalid), @"metadataUnavailable": @(metadataUnavailable), @"prerequisiteFailures": @(prerequisiteFailures),
               @"holdCheckPassed": holdCheck[@"success"],
               @"simulationAttempted": @(attempted), @"simulationPassed": @(simulationPassed), @"aptExitCode": @(exitCode),
               @"installActions": @(installActions), @"configureActions": @(configureActions), @"removalActions": @(removalActions), @"unexpectedActions": @(unexpectedActions),
-              @"executionRequests": [requests copy], @"executionSnapshot": executionSnapshot,
+              @"executionRequests": [requests copy], @"requestedItems": [requestedItems copy], @"executionSnapshot": executionSnapshot,
               @"safeToExecute": @(simulationPassed && blockedCount == 0 && requests.count > 0), @"reason": reason };
 }
 
-- (NSDictionary *)executeManifest:(NSDictionary *)manifest expectedPlan:(NSDictionary *)expectedPlan error:(NSError **)error {
+- (NSDictionary *)executeManifest:(NSDictionary *)manifest expectedPlan:(NSDictionary *)expectedPlan exactPayloads:(NSDictionary<NSString *,NSDictionary *> *)exactPayloads error:(NSError **)error {
     if (![expectedPlan[@"safeToExecute"] boolValue] || ![expectedPlan[@"executionSnapshot"] isKindOfClass:NSDictionary.class]) {
         if (error) *error = ATMRestorePlanError(72, @"This plan is not approved for execution.");
         return nil;
@@ -252,7 +287,7 @@ static NSDictionary *ATMRestoreHeldPackages(ATMEnvironment *environment) {
         return nil;
     }
     NSError *planError = nil;
-    NSDictionary *currentPlan = [self planForManifest:manifest installedPackages:installed error:&planError];
+    NSDictionary *currentPlan = [self planForManifest:manifest installedPackages:installed exactPayloads:exactPayloads error:&planError];
     if (!currentPlan || ![currentPlan[@"safeToExecute"] boolValue]) {
         if (error) *error = planError ?: ATMRestorePlanError(74, @"The Restore plan no longer passes every safety check.");
         return nil;
@@ -279,13 +314,12 @@ static NSDictionary *ATMRestoreHeldPackages(ATMEnvironment *environment) {
 
     NSError *postScanError = nil;
     NSArray<ATMPackageRecord *> *afterInstalled = [[[ATMPackageScanner alloc] initWithEnvironment:self.environment] scanInstalledPackages:&postScanError];
-    NSDictionary *postPlan = afterInstalled ? [self planForManifest:manifest installedPackages:afterInstalled error:nil] : nil;
+    NSDictionary *postPlan = afterInstalled ? [self planForManifest:manifest installedPackages:afterInstalled exactPayloads:exactPayloads error:nil] : nil;
     NSMutableDictionary<NSString *, ATMPackageRecord *> *afterByID = [NSMutableDictionary dictionary];
     for (ATMPackageRecord *record in afterInstalled ?: @[]) if (record.packageID.length) afterByID[record.packageID] = record;
     NSString *dpkg = ATMRestoreExecutable(self.environment, @[@"/usr/bin/dpkg", @"/bin/dpkg"]); NSUInteger completed = 0;
-    for (NSString *request in requests) {
-        NSRange separator = [request rangeOfString:@"=" options:NSBackwardsSearch]; if (separator.location == NSNotFound) continue;
-        NSString *packageID = [request substringToIndex:separator.location], *version = [request substringFromIndex:separator.location + 1];
+    for (NSDictionary *item in currentPlan[@"requestedItems"] ?: @[]) {
+        NSString *packageID = item[@"packageID"], *version = item[@"version"];
         NSString *installedVersion = afterByID[packageID].version;
         if ([installedVersion isEqualToString:version]) { completed++; continue; }
         if (dpkg.length && installedVersion.length && [ATMRestoreRun(dpkg, @[@"--compare-versions", installedVersion, @"gt", version])[@"exitCode"] integerValue] == 0) completed++;
@@ -293,8 +327,8 @@ static NSDictionary *ATMRestoreHeldPackages(ATMEnvironment *environment) {
     NSUInteger remaining = requests.count - completed;
     BOOL postCheckPassed = !postScanError && postPlan && [postPlan[@"simulationPassed"] boolValue] && [postPlan[@"blocked"] unsignedIntegerValue] == 0 && remaining == 0;
     BOOL success = aptExitCode == 0 && postCheckPassed;
-    NSString *restoreCode = success ? @"R30-OK" :
-        (postScanError ? @"R30-POSTSCAN" : (aptExitCode != 0 ? ATMRestoreFailureCode(run) : @"R30-VERIFY"));
+    NSString *restoreCode = success ? @"R31-OK" :
+        (postScanError ? @"R31-POSTSCAN" : (aptExitCode != 0 ? ATMRestoreFailureCode(run) : @"R31-VERIFY"));
     NSString *reason = success ? @"Restore completed and the package state passed verification." :
         (postScanError ? @"Restore finished, but the final package-state verification was unavailable." :
         (aptExitCode != 0 ? @"The package manager stopped before Restore completed." : @"Restore stopped because the final package state did not match the approved plan."));

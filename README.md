@@ -25,9 +25,9 @@ Rootful and roothide environments are not supported by the current beta.
 
 ## Restore safety
 
-Restore first checks package compatibility, protected and held packages, requested versions, repository availability, and a removal-free APT simulation. Execution is never automatic: it requires a second explicit confirmation, repeats the full scan and simulation, and stops if the approved plan changed.
+Restore first checks package compatibility, protected and held packages, requested versions, exact package availability, and a removal-free APT simulation. If an exact repository version is unavailable, it may use only the matching DEB embedded in the inspected backup after verifying its archive entry, SHA-256, package ID, version, architecture, priority, and Essential status. Execution is never automatic: it requires a second explicit confirmation, repeats the full scan, payload verification, and simulation, and stops if the approved plan changed.
 
-The executor can install missing packages and required upgrades only. It keeps newer installed versions and refuses removals, downgrades, protected or held packages, unavailable metadata, insecure or unauthenticated repositories, and source changes. A count-only completion record is retained locally for recovery evidence without exposing package identities.
+The executor can install missing packages and required upgrades only. It keeps newer installed versions and refuses removals, downgrades, protected or held packages, packages without exact repository metadata or a verified embedded DEB, insecure or unauthenticated repositories, additional dependency actions, and source changes. Temporary embedded payloads are app-owned, size-limited, never shown in diagnostics, and removed after execution. A count-only completion record is retained locally for recovery evidence without exposing package identities.
 
 The Rootless app uses a fixed persona-based package-manager launch boundary with the required persona/root-spawn entitlements. It never accepts a caller-supplied command. Restore failures are reduced to fixed privacy-safe codes and a numeric exit status; raw package-manager output, package identities, versions, and paths are not stored or shared.
 

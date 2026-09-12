@@ -12,14 +12,8 @@ typedef NS_ENUM(NSInteger, ATMBackupErrorCode) {
 @interface ATMBackupManager : NSObject
 - (instancetype)initWithEnvironment:(ATMEnvironment *)environment ledger:(ATMPersonalLedger *)ledger;
 - (NSArray<NSURL *> *)availableBackups;
-- (nullable NSURL *)createBackupWithPackages:(NSArray<ATMPackageRecord *> *)packages
-                                      sources:(NSArray<ATMSourceRecord *> *)sources
-                                        error:(NSError **)error;
-- (nullable NSURL *)createBackupWithPackages:(NSArray<ATMPackageRecord *> *)packages
-                                      sources:(NSArray<ATMSourceRecord *> *)sources
-                                  profileName:(nullable NSString *)profileName
-                                     password:(nullable NSString *)password
-                                        error:(NSError **)error;
+- (nullable NSURL *)createBackupWithPackages:(NSArray<ATMPackageRecord *> *)packages sources:(NSArray<ATMSourceRecord *> *)sources error:(NSError **)error;
+- (nullable NSURL *)createBackupWithPackages:(NSArray<ATMPackageRecord *> *)packages sources:(NSArray<ATMSourceRecord *> *)sources profileName:(nullable NSString *)profileName password:(nullable NSString *)password error:(NSError **)error;
 - (BOOL)isEncryptedBackup:(NSURL *)backupURL;
 - (nullable NSDictionary *)manifestForBackup:(NSURL *)backupURL error:(NSError **)error;
 - (nullable NSDictionary *)manifestForBackup:(NSURL *)backupURL password:(nullable NSString *)password error:(NSError **)error;
@@ -37,9 +31,11 @@ typedef NS_ENUM(NSInteger, ATMBackupErrorCode) {
 - (NSSet<NSString *> *)packageIDsForProfileNamed:(NSString *)name;
 - (BOOL)isBackupPinned:(NSURL *)backupURL;
 - (void)setBackup:(NSURL *)backupURL pinned:(BOOL)pinned;
-- (nullable NSDictionary *)restoreReadinessForManifest:(NSDictionary *)manifest
+- (nullable NSDictionary *)restoreReadinessForBackupURL:(NSURL *)backupURL
+                                               password:(nullable NSString *)password
                                       installedPackages:(NSArray<ATMPackageRecord *> *)installed
                                                   error:(NSError **)error;
+- (void)discardRestoreSession;
 - (nullable NSDictionary *)executeRestoreForManifest:(NSDictionary *)manifest
                                          expectedPlan:(NSDictionary *)expectedPlan
                                                 error:(NSError **)error;
