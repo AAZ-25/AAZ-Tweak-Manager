@@ -324,16 +324,16 @@ static BOOL ATMRestoreDiagnosticCodeAllowed(NSString *code) {
     static NSSet<NSString *> *allowedCodes; static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         allowedCodes = [NSSet setWithArray:@[
-            @"R39-READINESS", @"R39-READY", @"R39-BLOCKED", @"R39-STARTED", @"R39-OK", @"R39-PRECHECK", @"R39-APT-PREFLIGHT",
-            @"R39-PERSONA", @"R39-SPAWN", @"R39-SIGNAL", @"R39-LOCK", @"R39-PRIVILEGE", @"R39-STORAGE", @"R39-DPKG", @"R39-DPKG-PREFLIGHT", @"R39-PARTIAL",
-            @"R39-DEPENDENCY", @"R39-ARCHIVE", @"R39-AUTH", @"R39-SOURCE-AUTH", @"R39-SOURCE-RESTORE", @"R39-NETWORK", @"R39-APT", @"R39-POSTSCAN", @"R39-VERIFY", @"R39-UNKNOWN"
+            @"R40-READINESS", @"R40-READY", @"R40-BLOCKED", @"R40-STARTED", @"R40-OK", @"R40-PRECHECK", @"R40-APT-PREFLIGHT",
+            @"R40-PERSONA", @"R40-SPAWN", @"R40-SIGNAL", @"R40-LOCK", @"R40-PRIVILEGE", @"R40-STORAGE", @"R40-DPKG", @"R40-DPKG-PREFLIGHT", @"R40-PARTIAL",
+            @"R40-DEPENDENCY", @"R40-ARCHIVE", @"R40-AUTH", @"R40-SOURCE-AUTH", @"R40-SOURCE-RESTORE", @"R40-NETWORK", @"R40-APT", @"R40-POSTSCAN", @"R40-VERIFY", @"R40-UNKNOWN"
         ]];
     });
     return [code isKindOfClass:NSString.class] && [allowedCodes containsObject:code];
 }
 
 void ATMSetRestoreDiagnosticState(NSString *code, NSInteger exitCode) {
-    NSString *safeCode = ATMRestoreDiagnosticCodeAllowed(code) ? code : @"R39-UNKNOWN";
+    NSString *safeCode = ATMRestoreDiagnosticCodeAllowed(code) ? code : @"R40-UNKNOWN";
     [NSUserDefaults.standardUserDefaults setObject:safeCode forKey:ATMLastRestoreCodeKey];
     [NSUserDefaults.standardUserDefaults setInteger:exitCode forKey:ATMLastRestoreExitCodeKey];
 }
@@ -417,7 +417,7 @@ NSURL *ATMWriteDiagnosticReport(ATMEnvironment *environment,
     NSFileManager *fm = NSFileManager.defaultManager;
     NSDictionary *info = NSBundle.mainBundle.infoDictionary;
     NSString *storedRestoreCode = [NSUserDefaults.standardUserDefaults stringForKey:ATMLastRestoreCodeKey];
-    BOOL currentRestoreCode = [storedRestoreCode hasPrefix:@"R39-"];
+    BOOL currentRestoreCode = [storedRestoreCode hasPrefix:@"R40-"];
     NSMutableArray<NSString *> *lines = [@[
         @"AAZ Tweak Manager Diagnostic",
         @"format=1",

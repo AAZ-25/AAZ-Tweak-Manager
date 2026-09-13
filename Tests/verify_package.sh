@@ -19,7 +19,7 @@ case "$phase" in
   metadata)
     test -f "$deb"
     test "$(dpkg-deb -f "$deb" Package)" = "com.aaz.tweakmanager"
-    test "$(dpkg-deb -f "$deb" Version)" = "0.1.0~beta39"
+    test "$(dpkg-deb -f "$deb" Version)" = "0.1.0~beta40"
     test "$(dpkg-deb -f "$deb" Architecture)" = "iphoneos-arm64"
     dpkg-deb -c "$deb" > "$package_list"
     ;;
@@ -65,10 +65,10 @@ assert extension_entitlements == {
     "application-identifier": "com.aaz.tweakmanager.importer",
     "com.apple.security.application-groups": ["group.com.aaz.tweakmanager"],
 }
-assert app_info["CFBundleVersion"] == "39"
+assert app_info["CFBundleVersion"] == "40"
 assert "CFBundleDocumentTypes" not in app_info
 assert extension_info["CFBundleIdentifier"] == "com.aaz.tweakmanager.importer"
-assert extension_info["CFBundleVersion"] == "39"
+assert extension_info["CFBundleVersion"] == "40"
 definition = extension_info["NSExtension"]
 assert definition["NSExtensionPointIdentifier"] == "com.apple.share-services"
 assert definition["NSExtensionPrincipalClass"] == "AAZShareViewController"
@@ -89,10 +89,10 @@ PY
     grep -Fq 'Select All' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'Unselect All' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'Search packages' "$RUNNER_TEMP/aaz-app.strings"
-    grep -Fq 'Create Portable Backup?' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'Create Backup?' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'No manual DEB sharing is required.' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'Selection Updated' "$RUNNER_TEMP/aaz-app.strings"
-    grep -Fq 'Encrypted Portable Backup' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'Encrypted Backup' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'Package Vault' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'payloadCoverage' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'Portable Backup Verified' "$RUNNER_TEMP/aaz-app.strings"
@@ -110,15 +110,15 @@ PY
     grep -Fq 'Final Restore Confirmation' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'The Restore plan changed after confirmation' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'DPkg::Lock::Timeout=30' "$RUNNER_TEMP/aaz-app.strings"
-    grep -Fq 'R39-READINESS' "$RUNNER_TEMP/aaz-app.strings"
-    grep -Fq 'R39-BLOCKED' "$RUNNER_TEMP/aaz-app.strings"
-    grep -Fq 'R39-APT-PREFLIGHT' "$RUNNER_TEMP/aaz-app.strings"
-    grep -Fq 'R39-OK' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'R40-READINESS' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'R40-BLOCKED' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'R40-APT-PREFLIGHT' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'R40-OK' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq -- '--no-act' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq -- '--refuse-downgrade' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq -- '--install' "$RUNNER_TEMP/aaz-app.strings"
-    grep -Fq 'R39-DPKG-PREFLIGHT' "$RUNNER_TEMP/aaz-app.strings"
-    grep -Fq 'R39-PARTIAL' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'R40-DPKG-PREFLIGHT' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'R40-PARTIAL' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'Embedded DEBs' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'Repository Packages' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'verified DEBs embedded in this backup' "$RUNNER_TEMP/aaz-app.strings"
@@ -136,7 +136,8 @@ PY
     grep -Fq 'Package saved. Open AAZ Tweak Manager' "$RUNNER_TEMP/aaz-extension.strings"
     grep -Fq 'group.com.aaz.tweakmanager' "$RUNNER_TEMP/aaz-extension.strings"
     grep -Fq 'x.com/_kkk2' "$RUNNER_TEMP/aaz-app.strings"
-    grep -Fq 'Only a verified Portable Backup with 100% DEB coverage can be imported.' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'Backup Created: Limited Restore' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'The backup failed integrity validation and was not imported.' "$RUNNER_TEMP/aaz-app.strings"
     ;;
   stage)
     cp "$deb" AAZ-Tweak-Manager-rootless.deb

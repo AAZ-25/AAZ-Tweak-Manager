@@ -282,19 +282,19 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
     NSUInteger selectedInstalledCount = [[ATMAppModel.shared.packages filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(ATMPackageRecord *record, NSDictionary *bindings) { (void)bindings; return record.personalCandidate && [selected containsObject:record.packageID]; }]] count];
     if (!selectedInstalledCount) { ATMShowError(self, @"Nothing selected", [NSError errorWithDomain:@"ATM" code:2 userInfo:@{NSLocalizedDescriptionKey: @"Select at least one installed package before creating a backup."}]); return; }
     NSUInteger sourceCount = ATMAppModel.shared.sources.count;
-    NSString *message = [NSString stringWithFormat:@"%lu selected package%@, required non-system dependencies, and %lu sanitized source%@ will be captured automatically. Original DEBs are preferred; unchanged installed package files are safely repacked when needed. No manual DEB sharing is required.", (unsigned long)selectedInstalledCount, selectedInstalledCount == 1 ? @"" : @"s", (unsigned long)sourceCount, sourceCount == 1 ? @"" : @"s"];
-    UIAlertController *confirmation = [UIAlertController alertControllerWithTitle:@"Create Portable Backup?" message:message preferredStyle:UIAlertControllerStyleAlert];
+    NSString *message = [NSString stringWithFormat:@"%lu selected package%@, required non-system dependencies, and %lu sanitized source%@ will be saved. The app automatically captures original DEBs or safely reconstructs unchanged installed packages. No manual DEB sharing is required. If any payload cannot be captured, the inventory backup is still created and clearly marked as limited.", (unsigned long)selectedInstalledCount, selectedInstalledCount == 1 ? @"" : @"s", (unsigned long)sourceCount, sourceCount == 1 ? @"" : @"s"];
+    UIAlertController *confirmation = [UIAlertController alertControllerWithTitle:@"Create Backup?" message:message preferredStyle:UIAlertControllerStyleAlert];
     [confirmation addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
-    [confirmation addAction:[UIAlertAction actionWithTitle:@"Portable Backup" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) { [self performBackupWithPassword:nil]; }]];
-    [confirmation addAction:[UIAlertAction actionWithTitle:@"Encrypted Portable Backup" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) { [self promptForNewBackupPassword]; }]];
+    [confirmation addAction:[UIAlertAction actionWithTitle:@"Create Backup" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) { [self performBackupWithPassword:nil]; }]];
+    [confirmation addAction:[UIAlertAction actionWithTitle:@"Encrypted Backup" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) { [self promptForNewBackupPassword]; }]];
     [self presentViewController:confirmation animated:YES completion:nil];
 }
 - (void)promptForNewBackupPassword {
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Encrypt Portable Backup" message:@"Use at least 8 characters. AAZ Tweak Manager never stores or recovers this password." preferredStyle:UIAlertControllerStyleAlert];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Encrypt Backup" message:@"Use at least 8 characters. AAZ Tweak Manager never stores or recovers this password." preferredStyle:UIAlertControllerStyleAlert];
     [alert addTextFieldWithConfigurationHandler:^(UITextField *field) { field.placeholder = @"Password"; field.secureTextEntry = YES; }];
     [alert addTextFieldWithConfigurationHandler:^(UITextField *field) { field.placeholder = @"Confirm password"; field.secureTextEntry = YES; }];
     [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"Create Encrypted Portable Backup" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) { NSString *password = alert.textFields.firstObject.text ?: @"", *confirmation = alert.textFields.lastObject.text ?: @""; if (password.length < 8 || ![password isEqualToString:confirmation]) { ATMShowError(self, @"Password not accepted", [NSError errorWithDomain:@"ATM" code:4 userInfo:@{NSLocalizedDescriptionKey: @"Passwords must match and contain at least 8 characters."}]); return; } [self performBackupWithPassword:password]; }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Create Encrypted Backup" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) { NSString *password = alert.textFields.firstObject.text ?: @"", *confirmation = alert.textFields.lastObject.text ?: @""; if (password.length < 8 || ![password isEqualToString:confirmation]) { ATMShowError(self, @"Password not accepted", [NSError errorWithDomain:@"ATM" code:4 userInfo:@{NSLocalizedDescriptionKey: @"Passwords must match and contain at least 8 characters."}]); return; } [self performBackupWithPassword:password]; }]];
     [self presentViewController:alert animated:YES completion:nil];
 }
 - (NSString *)matchingProfileName {
@@ -321,9 +321,11 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
             NSArray *sources = [manifest[@"sources"] isKindOfClass:NSArray.class] ? manifest[@"sources"] : @[];
             NSUInteger embeddedCount = [[packages filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *package, NSDictionary *bindings) { (void)bindings; return [package[@"debStatus"] isEqualToString:@"exact-cache"]; }]] count];
             NSUInteger repackedCount = [[packages filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *package, NSDictionary *bindings) { (void)bindings; return [package[@"payloadOrigin"] isEqualToString:@"verified-repack"]; }]] count];
-            NSString *successMessage = [NSString stringWithFormat:@"%lu packages including dependencies • %lu sources • %lu embedded DEBs (%lu safely repacked)\n100%% portable coverage • %@ • Atomic write verified\n\nCredentials and user-data paths are never included.", (unsigned long)packages.count, (unsigned long)sources.count, (unsigned long)embeddedCount, (unsigned long)repackedCount, password.length ? @"Encrypted" : @"Standard"];
+            BOOL portable = [manifest[@"portable"] boolValue] && embeddedCount == packages.count; NSUInteger coverage = [manifest[@"payloadCoverage"] unsignedIntegerValue];
+            NSString *coverageMessage = portable ? @"Full offline Restore is available." : [NSString stringWithFormat:@"Inventory and sources were saved. %lu package payload%@ could not be captured, so full offline Restore stays blocked until a complete backup is created.", (unsigned long)(packages.count - embeddedCount), packages.count - embeddedCount == 1 ? @"" : @"s"];
+            NSString *successMessage = [NSString stringWithFormat:@"%lu packages including dependencies • %lu sources • %lu embedded DEBs (%lu safely repacked)\n%lu%% portable coverage • %@ • Atomic write verified\n\n%@\nCredentials and user-data paths are never included.", (unsigned long)packages.count, (unsigned long)sources.count, (unsigned long)embeddedCount, (unsigned long)repackedCount, (unsigned long)coverage, password.length ? @"Encrypted" : @"Standard", coverageMessage];
             [NSNotificationCenter.defaultCenter postNotificationName:ATMDataChangedNotification object:nil];
-            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Backup Created" message:successMessage preferredStyle:UIAlertControllerStyleAlert];
+            UIAlertController *alert = [UIAlertController alertControllerWithTitle:portable ? @"Portable Backup Created" : @"Backup Created: Limited Restore" message:successMessage preferredStyle:UIAlertControllerStyleAlert];
             [alert addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleCancel handler:nil]];
             [alert addAction:[UIAlertAction actionWithTitle:@"Share" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) { [self shareURL:url sourceView:self.navigationController.navigationBar]; }]];
             [self presentViewController:alert animated:YES completion:nil];
@@ -436,7 +438,7 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
         NSString *archiveSize = [NSByteCountFormatter stringFromByteCount:[report[@"fileSize"] longLongValue] countStyle:NSByteCountFormatterCountStyleFile];
         NSString *freeSize = [NSByteCountFormatter stringFromByteCount:[report[@"availableBytes"] longLongValue] countStyle:NSByteCountFormatterCountStyleFile];
         NSString *cachedSize = [NSByteCountFormatter stringFromByteCount:[report[@"cachedBytes"] longLongValue] countStyle:NSByteCountFormatterCountStyleFile];
-        _sections = @[
+        NSMutableArray<NSDictionary *> *sections = [@[
             @{ @"title": @"BACKUP", @"items": @[
                 @{ @"title": @"Protection", @"value": [report[@"encrypted"] boolValue] ? @"Encrypted" : @"Standard", @"symbol": @"lock.shield" },
                 @{ @"title": @"Archive Size", @"value": archiveSize, @"symbol": @"doc.zipper" },
@@ -446,6 +448,7 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
                 @{ @"title": @"Packages", @"value": [report[@"packageCount"] description] ?: @"0", @"symbol": @"shippingbox" },
                 @{ @"title": @"Sources", @"value": [report[@"sourceCount"] description] ?: @"0", @"symbol": @"link" },
                 @{ @"title": @"Embedded DEBs", @"value": [NSString stringWithFormat:@"%@ • %@", [report[@"cachedDEBCount"] description] ?: @"0", cachedSize], @"symbol": @"archivebox" },
+                @{ @"title": @"Portable Coverage", @"value": [NSString stringWithFormat:@"%@%%", [report[@"manifest"][@"payloadCoverage"] description] ?: @"0"], @"symbol": @"chart.bar.fill" },
                 @{ @"title": @"Safely Repacked", @"value": [report[@"repackedDEBCount"] description] ?: @"0", @"symbol": @"arrow.triangle.2.circlepath" },
                 @{ @"title": @"Restorable Sources", @"value": [report[@"restorableSourceCount"] description] ?: @"0", @"symbol": @"link.badge.plus" }
             ] },
@@ -455,7 +458,21 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
                 @{ @"title": @"Different Version", @"value": [@(different) description], @"symbol": @"arrow.triangle.2.circlepath" },
                 @{ @"title": @"Payload Unavailable", @"value": [@(unavailable) description], @"symbol": @"questionmark.circle" }
             ] }
-        ];
+        ] mutableCopy];
+        if (![[report[@"health"] description] isEqualToString:@"Healthy"]) {
+            NSDictionary *failures = [report[@"captureFailureCounts"] isKindOfClass:NSDictionary.class] ? report[@"captureFailureCounts"] : @{};
+            NSUInteger inventoryFailures = [failures[@"inventory"] unsignedIntegerValue] + [failures[@"payload"] unsignedIntegerValue];
+            NSUInteger safetyFailures = [failures[@"privacy"] unsignedIntegerValue] + [failures[@"verification"] unsignedIntegerValue];
+            NSUInteger toolFailures = [failures[@"tools"] unsignedIntegerValue] + [failures[@"staging"] unsignedIntegerValue] + [failures[@"archive"] unsignedIntegerValue];
+            NSUInteger packageFailures = [failures[@"control"] unsignedIntegerValue] + [failures[@"build"] unsignedIntegerValue] + [failures[@"identity"] unsignedIntegerValue] + [failures[@"unknown"] unsignedIntegerValue];
+            [sections addObject:@{ @"title": @"CAPTURE CHECKS (COUNTS ONLY)", @"items": @[
+                @{ @"title": @"Inventory or File Missing", @"value": [@(inventoryFailures) description], @"symbol": @"doc.badge.questionmark" },
+                @{ @"title": @"Privacy or Verification Block", @"value": [@(safetyFailures) description], @"symbol": @"hand.raised" },
+                @{ @"title": @"Tool or Archive Failure", @"value": [@(toolFailures) description], @"symbol": @"wrench.and.screwdriver" },
+                @{ @"title": @"Package Build Failure", @"value": [@(packageFailures) description], @"symbol": @"shippingbox.and.arrow.backward" }
+            ] }];
+        }
+        _sections = [sections copy];
     }
     return self;
 }
@@ -469,7 +486,7 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
     UIImageView *icon = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:healthy ? @"checkmark.shield.fill" : @"exclamationmark.triangle.fill"]];
     icon.tintColor = healthy ? UIColor.systemGreenColor : UIColor.systemOrangeColor; icon.translatesAutoresizingMaskIntoConstraints = NO;
     UILabel *title = [UILabel new]; title.text = healthy ? @"Portable Backup Verified" : @"Backup Not Portable"; title.font = [UIFont preferredFontForTextStyle:UIFontTextStyleTitle2]; title.adjustsFontForContentSizeCategory = YES; title.textAlignment = NSTextAlignmentCenter; title.translatesAutoresizingMaskIntoConstraints = NO;
-    UILabel *detail = [UILabel new]; detail.text = healthy ? @"Integrity passed with a verified original or safely repacked DEB for every package." : @"This backup does not contain a verified payload for every package. Create a new Portable Backup."; detail.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline]; detail.adjustsFontForContentSizeCategory = YES; detail.textColor = UIColor.secondaryLabelColor; detail.textAlignment = NSTextAlignmentCenter; detail.numberOfLines = 2; detail.translatesAutoresizingMaskIntoConstraints = NO;
+    UILabel *detail = [UILabel new]; detail.text = healthy ? @"Integrity passed with a verified original or safely repacked DEB for every package." : @"Inventory and sources are safe, but full offline Restore needs every package payload. Review the count-only capture checks below."; detail.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline]; detail.adjustsFontForContentSizeCategory = YES; detail.textColor = UIColor.secondaryLabelColor; detail.textAlignment = NSTextAlignmentCenter; detail.numberOfLines = 2; detail.translatesAutoresizingMaskIntoConstraints = NO;
     [header addSubview:icon]; [header addSubview:title]; [header addSubview:detail];
     [NSLayoutConstraint activateConstraints:@[[icon.topAnchor constraintEqualToAnchor:header.topAnchor constant:12], [icon.centerXAnchor constraintEqualToAnchor:header.centerXAnchor], [icon.widthAnchor constraintEqualToConstant:42], [icon.heightAnchor constraintEqualToConstant:42], [title.topAnchor constraintEqualToAnchor:icon.bottomAnchor constant:8], [title.leadingAnchor constraintEqualToAnchor:header.leadingAnchor constant:20], [title.trailingAnchor constraintEqualToAnchor:header.trailingAnchor constant:-20], [detail.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:4], [detail.leadingAnchor constraintEqualToAnchor:header.leadingAnchor constant:28], [detail.trailingAnchor constraintEqualToAnchor:header.trailingAnchor constant:-28]]];
     self.tableView.tableHeaderView = header;
@@ -609,7 +626,7 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
                 [progress dismissViewControllerAnimated:YES completion:^{
                     if (!result) { ATMShowError(weakSelf, @"Restore did not start", error); return; }
                     BOOL success = [result[@"success"] boolValue];
-                    NSString *detail = [NSString stringWithFormat:@"%@\n\nRestore code: %@\nPackage-manager exit: %@\nRequested: %@\nCompleted: %@\nRemaining: %@\nFinal verification: %@\nPackages removed: 0\nSources restored: %@\nPrivate sources skipped: %@", result[@"reason"] ?: @"Restore stopped.", result[@"restoreCode"] ?: @"R39-UNKNOWN", result[@"aptExitCode"] ?: @(-1), result[@"requested"] ?: @0, result[@"completed"] ?: @0, result[@"remaining"] ?: @0, [result[@"postCheckPassed"] boolValue] ? @"Passed" : @"Not passed", result[@"sourcesRestored"] ?: @0, result[@"privateSourcesSkipped"] ?: plan[@"privateSourcesSkipped"] ?: @0];
+                    NSString *detail = [NSString stringWithFormat:@"%@\n\nRestore code: %@\nPackage-manager exit: %@\nRequested: %@\nCompleted: %@\nRemaining: %@\nFinal verification: %@\nPackages removed: 0\nSources restored: %@\nPrivate sources skipped: %@", result[@"reason"] ?: @"Restore stopped.", result[@"restoreCode"] ?: @"R40-UNKNOWN", result[@"aptExitCode"] ?: @(-1), result[@"requested"] ?: @0, result[@"completed"] ?: @0, result[@"remaining"] ?: @0, [result[@"postCheckPassed"] boolValue] ? @"Passed" : @"Not passed", result[@"sourcesRestored"] ?: @0, result[@"privateSourcesSkipped"] ?: plan[@"privateSourcesSkipped"] ?: @0];
                     UIAlertController *summary = [UIAlertController alertControllerWithTitle:success ? @"Restore Completed" : @"Restore Needs Attention" message:detail preferredStyle:UIAlertControllerStyleAlert];
                     [summary addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleDefault handler:nil]];
                     [weakSelf presentViewController:summary animated:YES completion:nil];
@@ -808,7 +825,7 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
     else if ([event isEqualToString:@"profile-renamed"]) { title = @"Selection Profile Renamed"; summary = @"The saved package selection was preserved"; symbol = @"pencil.circle.fill"; }
     else if ([event isEqualToString:@"profile-duplicated"]) { title = @"Selection Profile Duplicated"; summary = [NSString stringWithFormat:@"%@ packages copied to a new profile", details[@"count"] ?: @0]; symbol = @"plus.square.on.square"; }
     else if ([event isEqualToString:@"restore-completed"]) { title = @"Restore Completed"; summary = [NSString stringWithFormat:@"%@ package actions completed • final check passed", details[@"completed"] ?: @0]; symbol = @"checkmark.shield.fill"; }
-    else if ([event isEqualToString:@"restore-stopped"]) { title = @"Restore Stopped"; summary = [NSString stringWithFormat:@"%@ completed • %@ remaining • %@", details[@"completed"] ?: @0, details[@"remaining"] ?: @0, details[@"restoreCode"] ?: @"R39-UNKNOWN"]; symbol = @"exclamationmark.shield.fill"; }
+    else if ([event isEqualToString:@"restore-stopped"]) { title = @"Restore Stopped"; summary = [NSString stringWithFormat:@"%@ completed • %@ remaining • %@", details[@"completed"] ?: @0, details[@"remaining"] ?: @0, details[@"restoreCode"] ?: @"R40-UNKNOWN"]; symbol = @"exclamationmark.shield.fill"; }
     NSDate *date = ATMDateFromISO(item[@"timestamp"]);
     static NSDateFormatter *timeFormatter; static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{ timeFormatter = [NSDateFormatter new]; timeFormatter.dateStyle = NSDateFormatterNoStyle; timeFormatter.timeStyle = NSDateFormatterShortStyle; });
