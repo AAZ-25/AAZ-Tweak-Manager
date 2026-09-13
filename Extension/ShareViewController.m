@@ -25,16 +25,24 @@ static BOOL ATMHasBackupHeader(const uint8_t *bytes, size_t length) {
     return length >= sizeof(encryptedHeader) && memcmp(bytes, encryptedHeader, sizeof(encryptedHeader)) == 0;
 }
 
-static BOOL ATMMaterializeBackup(NSURL *sourceURL) {
-    if (!sourceURL.isFileURL) return NO;
+static BOOL ATMHasDebianArchiveHeader(const uint8_t *bytes, size_t length) {
+    static const uint8_t archiveHeader[] = {'!', '<', 'a', 'r', 'c', 'h', '>', '\n'};
+    return length >= sizeof(archiveHeader) && memcmp(bytes, archiveHeader, sizeof(archiveHeader)) == 0;
+}
+
+static NSString *ATMMaterializeSharedFile(NSURL *sourceURL) {
+    if (!sourceURL.isFileURL) return nil;
     int source = open(sourceURL.fileSystemRepresentation, O_RDONLY | O_CLOEXEC);
-    if (source < 0) return NO;
+    if (source < 0) return nil;
 
     struct stat metadata;
     BOOL valid = fstat(source, &metadata) == 0 && S_ISREG(metadata.st_mode) && metadata.st_size > 0;
     uint8_t buffer[64 * 1024];
     ssize_t firstRead = valid ? read(source, buffer, sizeof(buffer)) : -1;
-    if (firstRead <= 0 || !ATMHasBackupHeader(buffer, (size_t)firstRead)) valid = NO;
+    NSString *extension = nil;
+    if (firstRead > 0 && ATMHasBackupHeader(buffer, (size_t)firstRead) && metadata.st_size <= (off_t)(1024ULL * 1024ULL * 1024ULL)) extension = @"aaztmbackup";
+    else if (firstRead > 0 && ATMHasDebianArchiveHeader(buffer, (size_t)firstRead) && metadata.st_size <= (off_t)(256ULL * 1024ULL * 1024ULL)) extension = @"deb";
+    else valid = NO;
 
     NSURL *groupURL = [NSFileManager.defaultManager containerURLForSecurityApplicationGroupIdentifier:ATMImportGroup];
     NSURL *inboxURL = [groupURL URLByAppendingPathComponent:@"ImportInbox" isDirectory:YES];
@@ -45,7 +53,7 @@ static BOOL ATMMaterializeBackup(NSURL *sourceURL) {
 
     NSString *identifier = NSUUID.UUID.UUIDString;
     NSURL *partialURL = [inboxURL URLByAppendingPathComponent:[NSString stringWithFormat:@".%@.partial", identifier]];
-    NSURL *finalURL = [inboxURL URLByAppendingPathComponent:[identifier stringByAppendingPathExtension:@"aaztmbackup"]];
+    NSURL *finalURL = [inboxURL URLByAppendingPathComponent:[identifier stringByAppendingPathExtension:extension ?: @"invalid"]];
     int destination = -1;
     if (valid) destination = open(partialURL.fileSystemRepresentation, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
     if (destination < 0) valid = NO;
@@ -65,12 +73,12 @@ static BOOL ATMMaterializeBackup(NSURL *sourceURL) {
     if (valid && rename(partialURL.fileSystemRepresentation, finalURL.fileSystemRepresentation) != 0) valid = NO;
     if (!valid) {
         unlink(partialURL.fileSystemRepresentation);
-        return NO;
+        return nil;
     }
     [NSFileManager.defaultManager setAttributes:@{NSFileProtectionKey: NSFileProtectionCompleteUntilFirstUserAuthentication}
                                     ofItemAtPath:finalURL.path
                                            error:nil];
-    return YES;
+    return extension;
 }
 
 @interface AAZShareViewController : UIViewController
@@ -87,7 +95,7 @@ static BOOL ATMMaterializeBackup(NSURL *sourceURL) {
     self.view.backgroundColor = UIColor.systemBackgroundColor;
     self.statusLabel = [UILabel new];
     self.statusLabel.translatesAutoresizingMaskIntoConstraints = NO;
-    self.statusLabel.text = @"Preparing backup…";
+    self.statusLabel.text = @"Preparing file…";
     self.statusLabel.textAlignment = NSTextAlignmentCenter;
     self.statusLabel.numberOfLines = 0;
     self.statusLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
@@ -117,36 +125,35 @@ static BOOL ATMMaterializeBackup(NSURL *sourceURL) {
     [super viewDidAppear:animated];
     if (self.started) return;
     self.started = YES;
-    [self loadSharedBackup];
+    [self loadSharedFile];
 }
 
-- (void)loadSharedBackup {
+- (void)loadSharedFile {
     NSMutableArray<NSItemProvider *> *providers = [NSMutableArray array];
     for (NSExtensionItem *item in self.extensionContext.inputItems) {
         if ([item isKindOfClass:NSExtensionItem.class]) [providers addObjectsFromArray:item.attachments ?: @[]];
     }
-    if (providers.count != 1) { [self finishWithSuccess:NO]; return; }
+    if (providers.count != 1) { [self finishWithKind:nil]; return; }
 
     NSItemProvider *provider = providers.firstObject;
     NSArray<NSString *> *types = @[@"com.aaz.tweakmanager.backup", @"public.archive", @"public.data", @"public.item"];
     NSString *selectedType = nil;
     for (NSString *type in types) if ([provider hasItemConformingToTypeIdentifier:type]) { selectedType = type; break; }
-    if (!selectedType) { [self finishWithSuccess:NO]; return; }
+    if (!selectedType) { [self finishWithKind:nil]; return; }
 
     __weak typeof(self) weakSelf = self;
     [provider loadFileRepresentationForTypeIdentifier:selectedType completionHandler:^(NSURL *url, NSError *error) {
-        BOOL saved = !error && ATMMaterializeBackup(url);
-        dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf finishWithSuccess:saved]; });
+        NSString *kind = error ? nil : ATMMaterializeSharedFile(url);
+        dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf finishWithKind:kind]; });
     }];
 }
 
-- (void)finishWithSuccess:(BOOL)success {
+- (void)finishWithKind:(NSString *)kind {
     [self.spinner stopAnimating];
     self.spinner.hidden = YES;
     self.closeButton.hidden = NO;
-    self.statusLabel.text = success
-        ? @"Backup saved. Open AAZ Tweak Manager to verify and import it."
-        : @"Could not prepare this backup.";
+    self.statusLabel.text = [kind isEqualToString:@"aaztmbackup"] ? @"Backup saved. Open AAZ Tweak Manager to verify and import it." :
+        ([kind isEqualToString:@"deb"] ? @"Package saved. Open AAZ Tweak Manager to verify it for Portable Backup." : @"Could not prepare this file.");
 }
 
 - (void)finish {

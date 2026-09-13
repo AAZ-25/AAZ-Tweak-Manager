@@ -22,7 +22,7 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "37"
+assert info["CFBundleVersion"] == "38"
 assert info["LSSupportsOpeningDocumentsInPlace"] is False
 assert "CFBundleDocumentTypes" not in info
 
@@ -42,7 +42,7 @@ assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["Ap
 with (ROOT / "Extension/Resources/Info.plist").open("rb") as handle:
     extension_info = plistlib.load(handle)
 assert extension_info["CFBundleIdentifier"] == "com.aaz.tweakmanager.importer"
-assert extension_info["CFBundleVersion"] == "37"
+assert extension_info["CFBundleVersion"] == "38"
 assert extension_info["CFBundlePackageType"] == "XPC!"
 extension_definition = extension_info["NSExtension"]
 assert extension_definition["NSExtensionPointIdentifier"] == "com.apple.share-services"
@@ -60,7 +60,7 @@ assert extension_entitlements == {
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta37" in control
+assert "Version: 0.1.0~beta38" in control
 assert "Priority: optional" in control
 
 excluded_directories = {".git", ".theos-build", "packages"}
@@ -97,7 +97,10 @@ assert "Unselect All" in all_text
 assert "Search packages" in all_text
 assert "No matching packages" in all_text
 assert "forPackageIDs" in all_text
-assert "Create Backup?" in all_text
+assert "Create Portable Backup?" in all_text
+assert "Incomplete inventory-only backups are not created." in all_text
+assert "Package Vault" in all_text
+assert "100%% portable coverage" in all_text
 assert "Creating…" in all_text
 assert "Selection Updated" in all_text
 assert "No Activity Yet" in all_text
@@ -114,7 +117,7 @@ assert "kCCHmacAlgSHA256" in all_text
 assert "SecRandomCopyBytes" in all_text
 assert "passwords are never stored" in all_text.lower()
 assert "Import" in all_text
-assert "Only a healthy backup can be imported" in all_text
+assert "Only a verified Portable Backup with 100% DEB coverage can be imported." in all_text
 assert "Backup Details" in all_text
 assert "Backup Verified" in all_text
 assert "ATMBackupDetailsController" in all_text
@@ -156,7 +159,8 @@ assert "UIDocumentPickerViewController" not in view_controller_text
 assert "DOCConfiguration" not in view_controller_text
 assert "UniformTypeIdentifiers" not in view_controller_text
 assert "loadFileRepresentationForTypeIdentifier" in extension_text
-assert "ATMMaterializeBackup(url)" in extension_text
+assert "ATMMaterializeSharedFile(url)" in extension_text
+assert "ATMHasDebianArchiveHeader" in extension_text
 assert "containerURLForSecurityApplicationGroupIdentifier:ATMImportGroup" in extension_text
 assert "group.com.aaz.tweakmanager" in extension_text
 assert "O_RDONLY | O_CLOEXEC" in extension_text
@@ -198,9 +202,9 @@ for required_executor_guard in (
     '@"Acquire::AllowDowngradeToInsecureRepositories=false"',
     '@"APT::Get::Allow-Downgrades=false"',
     '@"DPkg::Lock::Timeout=30"',
-    '"R37-PERSONA"', '"R37-SPAWN"', '"R37-LOCK"', '"R37-PRIVILEGE"',
-    '"R37-STORAGE"', '"R37-DPKG"', '"R37-DPKG-PREFLIGHT"', '"R37-PARTIAL"', '"R37-DEPENDENCY"', '"R37-ARCHIVE"', '"R37-APT-PREFLIGHT"',
-    '"R37-AUTH"', '"R37-SOURCE-AUTH"', '"R37-NETWORK"', '"R37-APT"',
+    '"R38-PERSONA"', '"R38-SPAWN"', '"R38-LOCK"', '"R38-PRIVILEGE"',
+    '"R38-STORAGE"', '"R38-DPKG"', '"R38-DPKG-PREFLIGHT"', '"R38-PARTIAL"', '"R38-DEPENDENCY"', '"R38-ARCHIVE"', '"R38-APT-PREFLIGHT"',
+    '"R38-AUTH"', '"R38-SOURCE-AUTH"', '"R38-NETWORK"', '"R38-APT"',
     '@"The Restore plan changed after confirmation.',
     '@"sourcesChanged": @NO', '@"removalsAllowed": @NO', '@"downgradesAllowed": @NO',
     '@"identitiesIncluded": @NO',
@@ -212,7 +216,7 @@ for required_embedded_guard in (
     'ATMRestoreVerifiedPayload', '@"--field"', 'ATMSHA256ForFile',
     '256ULL * 1024ULL * 1024ULL', '@"source": @"embedded"',
     '@"items": [requestedItems copy]', 'restoreSessionID',
-    '@"R37-READINESS"', '@"R37-READY"', '@"R37-BLOCKED"',
+    '@"R38-READINESS"', '@"R38-READY"', '@"R38-BLOCKED"',
     'prepareRestoreSessionForBackupURL', 'AAZTweakManagerRestore',
     '1024ULL * 1024ULL * 1024ULL', 'restoreReadinessForBackupURL',
 ):
@@ -233,8 +237,8 @@ assert restore_planner_text.count(verified_payload_lookup) == 1
 assert restore_planner_text.index(verified_payload_lookup) < restore_planner_text.index(repository_metadata_lookup)
 assert 'if (verifiedPayload) {' in restore_planner_text
 assert restore_planner_text.index('if (verifiedPayload) {') < restore_planner_text.index(repository_metadata_lookup)
-assert restore_planner_text.index('return @"R37-DPKG"') < restore_planner_text.index('return @"R37-AUTH"')
-assert restore_planner_text.index('return @"R37-ARCHIVE"') < restore_planner_text.index('return @"R37-AUTH"')
+assert restore_planner_text.index('return @"R38-DPKG"') < restore_planner_text.index('return @"R38-AUTH"')
+assert restore_planner_text.index('return @"R38-ARCHIVE"') < restore_planner_text.index('return @"R38-AUTH"')
 for required_local_auth_guard in (
     'BOOL mixedRequestSources = embeddedRequestCount > 0 && repositoryRequestCount > 0',
     'if (mixedRequestSources) { prerequisiteFailures++; blockedCount++; }',
@@ -247,8 +251,8 @@ for required_privileged_preflight in (
     'embeddedOnly ? @"APT::Get::AllowUnauthenticated=true" : @"APT::Get::AllowUnauthenticated=false"',
     'ATMRestoreRunWithPrivilege(aptGet, preflightArguments, YES)',
     'preflightInstallActions == requests.count', 'preflightRemovalActions == 0',
-    'preflightUnexpectedActions == 0', '@"R37-APT-PREFLIGHT"',
-    'if (!embeddedOnly) {', '@"R37-DPKG-PREFLIGHT"', '@"R37-PARTIAL"',
+    'preflightUnexpectedActions == 0', '@"R38-APT-PREFLIGHT"',
+    'if (!embeddedOnly) {', '@"R38-DPKG-PREFLIGHT"', '@"R38-PARTIAL"',
 ):
     assert required_privileged_preflight in restore_planner_text, f"missing privileged preflight guard: {required_privileged_preflight}"
 assert "NSXPCConnection" not in all_text
@@ -276,9 +280,30 @@ assert "restorePreviewForBackup" not in all_text
 assert "share-extension-received" in all_text
 assert "pendingImportURLs" in all_text
 assert "In Files, Share → Save to AAZ Tweak Manager" in all_text
-assert '@"Preparing backup…"' in extension_text
+assert '@"Preparing file…"' in extension_text
 assert '@"Backup saved. Open AAZ Tweak Manager to verify and import it."' in extension_text
+assert '@"Package saved. Open AAZ Tweak Manager to verify it for Portable Backup."' in extension_text
+backup_manager_text = (ROOT / "Core/ATMBackupManager.m").read_text()
+for required_portable_guard in (
+    'packageVaultDirectory', 'importPackagePayloadFromURL', 'ATMValidatedBackupPayload',
+    '@"--download-only"', '@"--reinstall"', '@"APT::Get::AllowUnauthenticated=false"',
+    '@"Acquire::AllowInsecureRepositories=false"', '@"Acquire::AllowDowngradeToInsecureRepositories=false"',
+    '@"Debug::NoLocking=true"', 'Dir::Cache::archives=',
+    '@"portable": @YES', '@"payloadCoverage": @100',
+    '[manifest[@"portable"] boolValue]', '[manifest[@"payloadCoverage"] integerValue] == 100',
+    'cached == manifestPackages.count', '@"APT::Get::Allow-Downgrades=false"',
+    '@"APT::Get::Allow-Change-Held-Packages=false"', '@"Acquire::Retries=0"',
+    'embeddedCount != chosen.count', 'Portable Backup needs %lu more verified package DEB',
+):
+    assert required_portable_guard in backup_manager_text, f"missing portable-backup guard: {required_portable_guard}"
+assert backup_manager_text.index('authenticatedRepositoryMetadataForRecord') < backup_manager_text.index('acquireAuthenticatedRepositoryPackageForRecord')
+assert 'ATMProtectedPackageIDs() containsObject:packageID.lowercaseString' in backup_manager_text
+assert 'isPendingPackagePayloadURL' in all_text
 assert "filenames, paths, providers, passwords, or archive contents" in all_text
+assert 'Portable Backup Verified' in all_text
+assert 'Backup Not Portable' in all_text
+assert 'Only a verified Portable Backup with 100% DEB coverage can be imported.' in all_text
+assert 'Only a healthy backup can be imported' not in all_text
 assert "Already Imported" in all_text
 assert "NSFileCoordinator" in all_text
 assert "copy-direct-started" in all_text

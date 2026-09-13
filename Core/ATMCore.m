@@ -322,16 +322,16 @@ static BOOL ATMRestoreDiagnosticCodeAllowed(NSString *code) {
     static NSSet<NSString *> *allowedCodes; static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         allowedCodes = [NSSet setWithArray:@[
-            @"R37-READINESS", @"R37-READY", @"R37-BLOCKED", @"R37-STARTED", @"R37-OK", @"R37-PRECHECK", @"R37-APT-PREFLIGHT",
-            @"R37-PERSONA", @"R37-SPAWN", @"R37-SIGNAL", @"R37-LOCK", @"R37-PRIVILEGE", @"R37-STORAGE", @"R37-DPKG", @"R37-DPKG-PREFLIGHT", @"R37-PARTIAL",
-            @"R37-DEPENDENCY", @"R37-ARCHIVE", @"R37-AUTH", @"R37-SOURCE-AUTH", @"R37-NETWORK", @"R37-APT", @"R37-POSTSCAN", @"R37-VERIFY", @"R37-UNKNOWN"
+            @"R38-READINESS", @"R38-READY", @"R38-BLOCKED", @"R38-STARTED", @"R38-OK", @"R38-PRECHECK", @"R38-APT-PREFLIGHT",
+            @"R38-PERSONA", @"R38-SPAWN", @"R38-SIGNAL", @"R38-LOCK", @"R38-PRIVILEGE", @"R38-STORAGE", @"R38-DPKG", @"R38-DPKG-PREFLIGHT", @"R38-PARTIAL",
+            @"R38-DEPENDENCY", @"R38-ARCHIVE", @"R38-AUTH", @"R38-SOURCE-AUTH", @"R38-NETWORK", @"R38-APT", @"R38-POSTSCAN", @"R38-VERIFY", @"R38-UNKNOWN"
         ]];
     });
     return [code isKindOfClass:NSString.class] && [allowedCodes containsObject:code];
 }
 
 void ATMSetRestoreDiagnosticState(NSString *code, NSInteger exitCode) {
-    NSString *safeCode = ATMRestoreDiagnosticCodeAllowed(code) ? code : @"R37-UNKNOWN";
+    NSString *safeCode = ATMRestoreDiagnosticCodeAllowed(code) ? code : @"R38-UNKNOWN";
     [NSUserDefaults.standardUserDefaults setObject:safeCode forKey:ATMLastRestoreCodeKey];
     [NSUserDefaults.standardUserDefaults setInteger:exitCode forKey:ATMLastRestoreExitCodeKey];
 }
