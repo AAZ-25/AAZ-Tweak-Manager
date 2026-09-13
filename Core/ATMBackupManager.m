@@ -100,6 +100,44 @@ static NSDictionary *ATMRunBackupTool(NSString *tool, NSArray<NSString *> *argum
     return ATMRunBackupToolWithPrivilege(tool, arguments, NO, nil);
 }
 
+static BOOL ATMCreateDirectoryTreeBelowRoot(NSURL *rootURL, NSString *relativePath, NSString **failureStage) {
+    if (!rootURL.isFileURL || !relativePath.length || relativePath.length > 4096 || [relativePath hasPrefix:@"/"]) {
+        if (failureStage) *failureStage = @"directory-containment";
+        return NO;
+    }
+    NSArray<NSString *> *components = [relativePath componentsSeparatedByString:@"/"];
+    for (NSString *component in components) {
+        if (!component.length || [component isEqualToString:@"."] || [component isEqualToString:@".."] || [component containsString:@"\0"] || [component containsString:@"\r"] || [component containsString:@"\n"]) {
+            if (failureStage) *failureStage = @"directory-containment";
+            return NO;
+        }
+    }
+    int directoryFD = open(rootURL.path.fileSystemRepresentation, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (directoryFD < 0) {
+        if (failureStage) *failureStage = @"directory-create";
+        return NO;
+    }
+    for (NSString *component in components) {
+        const char *name = component.fileSystemRepresentation;
+        if (!name || (mkdirat(directoryFD, name, 0755) != 0 && errno != EEXIST)) {
+            close(directoryFD);
+            if (failureStage) *failureStage = @"directory-create";
+            return NO;
+        }
+        int childFD = openat(directoryFD, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+        if (childFD < 0) {
+            NSInteger openError = errno;
+            close(directoryFD);
+            if (failureStage) *failureStage = (openError == ELOOP || openError == ENOTDIR) ? @"directory-containment" : @"directory-create";
+            return NO;
+        }
+        close(directoryFD);
+        directoryFD = childFD;
+    }
+    close(directoryFD);
+    return YES;
+}
+
 static BOOL ATMBackupPackageIDIsValid(NSString *value) {
     if (![value isKindOfClass:NSString.class] || value.length < 1 || value.length > 128) return NO;
     static NSRegularExpression *expression; static dispatch_once_t onceToken;
@@ -330,11 +368,7 @@ static NSData *ATMDecryptArchive(NSData *container, NSString *password, NSError 
     NSURL *fileListURL = [root URLByAppendingPathComponent:@"payload-files"], *tarURL = [root URLByAppendingPathComponent:@"payload.tar"], *stage = [root URLByAppendingPathComponent:@"stage" isDirectory:YES];
     NSData *fileListData = [[[safePaths componentsJoinedByString:@"\n"] stringByAppendingString:@"\n"] dataUsingEncoding:NSUTF8StringEncoding];
     if (![fileListData writeToURL:fileListURL options:NSDataWritingAtomic error:nil] || ![NSFileManager.defaultManager createDirectoryAtURL:stage withIntermediateDirectories:YES attributes:nil error:nil]) { if (failureStage) *failureStage = @"staging"; return nil; }
-    for (NSString *relativePath in directoryPaths) {
-        NSURL *directoryURL = [stage URLByAppendingPathComponent:relativePath isDirectory:YES];
-        NSString *stageRoot = stage.URLByStandardizingPath.path, *directory = directoryURL.URLByStandardizingPath.path;
-        if (!stageRoot.length || ![directory hasPrefix:[stageRoot stringByAppendingString:@"/"]] || ![NSFileManager.defaultManager createDirectoryAtURL:directoryURL withIntermediateDirectories:YES attributes:nil error:nil]) { if (failureStage) *failureStage = @"directory-staging"; return nil; }
-    }
+    for (NSString *relativePath in directoryPaths) if (!ATMCreateDirectoryTreeBelowRoot(stage, relativePath, failureStage)) return nil;
     NSDictionary *archive = ATMRunBackupToolWithPrivilege(tar, @[@"-cpf", tarURL.path, @"-C", payloadRoot, @"-T", fileListURL.path], YES, nil);
     if ([archive[@"exitCode"] integerValue] != 0) { if (failureStage) *failureStage = @"archive-create"; return nil; }
     NSDictionary *extract = ATMRunBackupToolWithPrivilege(tar, @[@"-xpf", tarURL.path, @"-C", stage.path], YES, nil);

@@ -77,7 +77,7 @@ static NSURL *ATMWriteBackupSummaryReport(NSDictionary *report, NSError **error)
     NSDictionary *info = NSBundle.mainBundle.infoDictionary;
     NSDictionary *manifest = [report[@"manifest"] isKindOfClass:NSDictionary.class] ? report[@"manifest"] : @{};
     NSDictionary *failures = [report[@"captureFailureCounts"] isKindOfClass:NSDictionary.class] ? report[@"captureFailureCounts"] : @{};
-    NSArray<NSString *> *stageKeys = @[@"inventory", @"payload", @"privacy", @"verification", @"tools", @"staging", @"directory-staging", @"archive", @"archive-create", @"archive-extract", @"control", @"build", @"identity", @"unknown"];
+    NSArray<NSString *> *stageKeys = @[@"inventory", @"payload", @"privacy", @"verification", @"tools", @"staging", @"directory-containment", @"directory-create", @"directory-staging", @"archive", @"archive-create", @"archive-extract", @"control", @"build", @"identity", @"unknown"];
     NSMutableString *text = [NSMutableString stringWithFormat:
         @"AAZ Tweak Manager Backup Report\nformat=1\nappVersion=%@\nappBuild=%@\nhealth=%@\nportable=%@\npackages=%@\nsources=%@\nrestorableSources=%@\nembeddedDEBs=%@\nsafelyRepacked=%@\nportableCoverage=%@\npayloadUnavailable=%@\nbadHashes=%@\npackageHashFailures=%@\nsourceHashFailures=%@\nunreadableEntries=%@\n",
         info[@"CFBundleShortVersionString"] ?: @"unknown", info[@"CFBundleVersion"] ?: @"unknown",
@@ -483,7 +483,7 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
             NSDictionary *failures = [report[@"captureFailureCounts"] isKindOfClass:NSDictionary.class] ? report[@"captureFailureCounts"] : @{};
             NSUInteger inventoryFailures = [failures[@"inventory"] unsignedIntegerValue] + [failures[@"payload"] unsignedIntegerValue];
             NSUInteger safetyFailures = [failures[@"privacy"] unsignedIntegerValue] + [failures[@"verification"] unsignedIntegerValue];
-            NSUInteger toolFailures = [failures[@"tools"] unsignedIntegerValue] + [failures[@"staging"] unsignedIntegerValue] + [failures[@"directory-staging"] unsignedIntegerValue] + [failures[@"archive"] unsignedIntegerValue] + [failures[@"archive-create"] unsignedIntegerValue] + [failures[@"archive-extract"] unsignedIntegerValue];
+            NSUInteger toolFailures = [failures[@"tools"] unsignedIntegerValue] + [failures[@"staging"] unsignedIntegerValue] + [failures[@"directory-containment"] unsignedIntegerValue] + [failures[@"directory-create"] unsignedIntegerValue] + [failures[@"directory-staging"] unsignedIntegerValue] + [failures[@"archive"] unsignedIntegerValue] + [failures[@"archive-create"] unsignedIntegerValue] + [failures[@"archive-extract"] unsignedIntegerValue];
             NSUInteger packageFailures = [failures[@"control"] unsignedIntegerValue] + [failures[@"build"] unsignedIntegerValue] + [failures[@"identity"] unsignedIntegerValue] + [failures[@"unknown"] unsignedIntegerValue];
             [sections addObject:@{ @"title": @"CAPTURE CHECKS (COUNTS ONLY)", @"items": @[
                 @{ @"title": @"Inventory or File Missing", @"value": [@(inventoryFailures) description], @"symbol": @"doc.badge.questionmark" },

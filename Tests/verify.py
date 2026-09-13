@@ -25,7 +25,7 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "41"
+assert info["CFBundleVersion"] == "42"
 assert info["LSSupportsOpeningDocumentsInPlace"] is False
 assert "CFBundleDocumentTypes" not in info
 
@@ -45,7 +45,7 @@ assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["Ap
 with (ROOT / "Extension/Resources/Info.plist").open("rb") as handle:
     extension_info = plistlib.load(handle)
 assert extension_info["CFBundleIdentifier"] == "com.aaz.tweakmanager.importer"
-assert extension_info["CFBundleVersion"] == "41"
+assert extension_info["CFBundleVersion"] == "42"
 assert extension_info["CFBundlePackageType"] == "XPC!"
 extension_definition = extension_info["NSExtension"]
 assert extension_definition["NSExtensionPointIdentifier"] == "com.apple.share-services"
@@ -63,7 +63,7 @@ assert extension_entitlements == {
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta41" in control
+assert "Version: 0.1.0~beta42" in control
 assert "Priority: optional" in control
 
 excluded_directories = {".git", ".theos-build", "packages"}
@@ -327,6 +327,12 @@ assert 'Backup Not Portable' in all_text
 assert '@"directories": directoryPaths.array' in all_text
 assert '@"archive-create"' in all_text
 assert '@"archive-extract"' in all_text
+assert 'ATMCreateDirectoryTreeBelowRoot' in backup_manager_text
+assert 'mkdirat(directoryFD, name, 0755)' in backup_manager_text
+assert 'openat(directoryFD, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)' in backup_manager_text
+assert '@"directory-containment"' in all_text
+assert '@"directory-create"' in all_text
+assert 'stage.URLByStandardizingPath.path' not in backup_manager_text
 assert '@"--no-recursion"' not in backup_manager_text
 assert 'packageHashFailureCount' in all_text
 assert 'sourceHashFailureCount' in all_text
