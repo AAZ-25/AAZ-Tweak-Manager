@@ -27,7 +27,7 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "45"
+assert info["CFBundleVersion"] == "46"
 assert info["LSSupportsOpeningDocumentsInPlace"] is False
 assert "CFBundleDocumentTypes" not in info
 
@@ -47,7 +47,7 @@ assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["Ap
 with (ROOT / "Extension/Resources/Info.plist").open("rb") as handle:
     extension_info = plistlib.load(handle)
 assert extension_info["CFBundleIdentifier"] == "com.aaz.tweakmanager.importer"
-assert extension_info["CFBundleVersion"] == "45"
+assert extension_info["CFBundleVersion"] == "46"
 assert extension_info["CFBundlePackageType"] == "XPC!"
 extension_definition = extension_info["NSExtension"]
 assert extension_definition["NSExtensionPointIdentifier"] == "com.apple.share-services"
@@ -65,7 +65,7 @@ assert extension_entitlements == {
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta45" in control
+assert "Version: 0.1.0~beta46" in control
 assert "Priority: optional" in control
 assert "Depends: firmware (>= 15.0), coreutils, diffutils, dpkg, tar" in control
 
@@ -345,6 +345,14 @@ assert 'combinedFailureCounts = [preflightFailureCounts mutableCopy]' in backup_
 assert '[packageCaptureFailureCounts enumerateKeysAndObjectsUsingBlock:' in backup_manager_text
 assert 'ATMStagedPayloadVerificationFailure' in backup_manager_text
 assert 'ATMVerificationStage' in backup_manager_text
+assert 'ATMRequiredDirectoryPaths' in backup_manager_text
+assert 'ATMNormalizeStagedPayloadModes' in backup_manager_text
+assert '@"-P", sourcePath, destinationPath' in backup_manager_text
+assert '@"-pP", sourcePath, destinationPath' not in backup_manager_text
+assert '@[@"-x", @"-m", @"-f", tarURL.path' in backup_manager_text
+assert 'preflightFailureCounts[@"preflight-warning"] = @1' in backup_manager_text
+assert 'preflightFailureCounts[@"preflight"] = @1' not in backup_manager_text
+assert '[@"preflight-" stringByAppendingString:directFailure]' in backup_manager_text
 assert 'if (S_ISREG(sourceInfo.st_mode)) {' in backup_manager_text
 assert 'if ((sourceInfo.st_mode & 07777) != (stagedInfo.st_mode & 07777)) return @"mode";' in backup_manager_text
 assert 'return @"symlink";' in backup_manager_text
@@ -417,12 +425,32 @@ with tempfile.TemporaryDirectory() as temporary:
     subprocess.run(["tar", "-cpf", str(fallback_archive), "-C", str(payload_root), "-T", str(fallback_list)], check=True, capture_output=True)
     fallback_stage = temporary_root / "fallback-stage"
     fallback_stage.mkdir()
-    subprocess.run(["tar", "-xpf", str(fallback_archive), "-C", str(fallback_stage)], check=True, capture_output=True)
+    subprocess.run(["tar", "-xmf", str(fallback_archive), "-C", str(fallback_stage)], check=True, capture_output=True)
+    (fallback_stage / "usr").chmod((payload_root / "usr").stat().st_mode & 0o7777)
+    (fallback_stage / "usr/lib").chmod((payload_root / "usr/lib").stat().st_mode & 0o7777)
+    (fallback_stage / "usr/lib/aaz-preflight").chmod(synthetic.stat().st_mode & 0o7777)
+    (fallback_stage / "usr/lib/aaz-preflight/probe").chmod(executable.stat().st_mode & 0o7777)
     assert (fallback_stage / "usr/lib/aaz-preflight/probe").read_bytes() == executable.read_bytes()
     assert (fallback_stage / "usr/lib/aaz-preflight/probe").stat().st_mode & 0o777 == 0o755
     assert (fallback_stage / "usr/lib/aaz-preflight/probe-link").is_symlink()
     assert os.readlink(fallback_stage / "usr/lib/aaz-preflight/probe-link") == "probe"
     assert not (fallback_stage / "shared/not-listed").exists()
+
+    implicit_root = temporary_root / "implicit"
+    implicit_file = implicit_root / "one" / "two" / "payload"
+    implicit_file.parent.mkdir(parents=True)
+    implicit_file.write_text("implicit parents")
+    implicit_stage = temporary_root / "implicit-stage"
+    implicit_stage.mkdir()
+    subprocess.run(["cp", "-P", str(implicit_file), str(implicit_stage / "payload")], check=True, capture_output=True)
+    (implicit_stage / "payload").chmod(implicit_file.stat().st_mode & 0o7777)
+    assert (implicit_stage / "payload").read_bytes() == implicit_file.read_bytes()
+
+    expected_parents = set()
+    for relative in ("one/two/payload", "one/three/link"):
+        parts = Path(relative).parts
+        expected_parents.update(str(Path(*parts[:index])) for index in range(1, len(parts)))
+    assert expected_parents == {"one", "one/two", "one/three"}
 
     package_stage = temporary_root / "package-stage"
     shutil.copytree(direct_stage, package_stage, symlinks=True)

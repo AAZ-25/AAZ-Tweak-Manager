@@ -163,26 +163,46 @@ static BOOL ATMCreateDirectoryTreeBelowRoot(NSURL *rootURL, NSString *relativePa
     return YES;
 }
 
-static BOOL ATMResetAndPreparePayloadStage(NSURL *stage, NSString *payloadRoot, NSArray<NSString *> *directoryPaths, NSString **failureStage) {
+static NSArray<NSString *> *ATMRequiredDirectoryPaths(NSArray<NSString *> *safePaths, NSArray<NSString *> *directoryPaths) {
+    NSMutableOrderedSet<NSString *> *required = [NSMutableOrderedSet orderedSet];
+    NSMutableArray<NSDictionary *> *inputs = [NSMutableArray array];
+    for (NSString *path in directoryPaths ?: @[]) [inputs addObject:@{ @"path": path, @"includeLast": @YES }];
+    for (NSString *path in safePaths ?: @[]) [inputs addObject:@{ @"path": path, @"includeLast": @NO }];
+    for (NSDictionary *input in inputs) {
+        NSString *path = input[@"path"];
+        NSArray<NSString *> *components = [path componentsSeparatedByString:@"/"];
+        NSUInteger limit = [input[@"includeLast"] boolValue] ? components.count : (components.count ? components.count - 1 : 0);
+        NSMutableArray<NSString *> *parents = [NSMutableArray array];
+        for (NSUInteger index = 0; index < components.count; index++) {
+            NSString *component = components[index];
+            if (!component.length || [component isEqualToString:@"."] || [component isEqualToString:@".."] || [component containsString:@"\0"] || [component containsString:@"\r"] || [component containsString:@"\n"]) return nil;
+            if (index >= limit) continue;
+            [parents addObject:component];
+            [required addObject:[parents componentsJoinedByString:@"/"]];
+        }
+    }
+    return required.array;
+}
+
+static BOOL ATMResetAndPreparePayloadStage(NSURL *stage, NSString *payloadRoot, NSArray<NSString *> *safePaths, NSArray<NSString *> *directoryPaths, NSString **failureStage) {
+    (void)payloadRoot;
     [NSFileManager.defaultManager removeItemAtURL:stage error:nil];
     if (![NSFileManager.defaultManager createDirectoryAtURL:stage withIntermediateDirectories:YES attributes:nil error:nil]) {
         if (failureStage) *failureStage = @"directory-create";
         return NO;
     }
-    for (NSString *relativePath in directoryPaths) {
+    NSArray<NSString *> *requiredDirectories = ATMRequiredDirectoryPaths(safePaths, directoryPaths);
+    if (!requiredDirectories) { if (failureStage) *failureStage = @"directory-containment"; return NO; }
+    for (NSString *relativePath in requiredDirectories) {
         if (!ATMCreateDirectoryTreeBelowRoot(stage, relativePath, failureStage)) return NO;
-        NSString *sourcePath = [payloadRoot isEqualToString:@"/"] ? [@"/" stringByAppendingString:relativePath] : [payloadRoot stringByAppendingPathComponent:relativePath];
-        struct stat sourceInfo;
-        if (lstat(sourcePath.fileSystemRepresentation, &sourceInfo) != 0 || !S_ISDIR(sourceInfo.st_mode) || chmod([[stage.path stringByAppendingPathComponent:relativePath] fileSystemRepresentation], sourceInfo.st_mode & 07777) != 0) {
-            if (failureStage) *failureStage = @"directory-create";
-            return NO;
-        }
     }
     return YES;
 }
 
 static NSString *ATMStagedPayloadVerificationFailure(NSURL *stage, NSString *payloadRoot, NSArray<NSString *> *safePaths, NSArray<NSString *> *directoryPaths, NSString *compareTool) {
-    NSSet<NSString *> *expectedFiles = [NSSet setWithArray:safePaths], *expectedDirectories = [NSSet setWithArray:directoryPaths];
+    NSArray<NSString *> *requiredDirectories = ATMRequiredDirectoryPaths(safePaths, directoryPaths);
+    if (!requiredDirectories) return @"source";
+    NSSet<NSString *> *expectedFiles = [NSSet setWithArray:safePaths], *expectedDirectories = [NSSet setWithArray:requiredDirectories];
     NSMutableSet<NSString *> *seenFiles = [NSMutableSet set], *seenDirectories = [NSMutableSet set];
     __block BOOL enumerationFailed = NO;
     NSDirectoryEnumerator *enumerator = [NSFileManager.defaultManager enumeratorAtURL:stage includingPropertiesForKeys:nil options:0 errorHandler:^BOOL(NSURL *url, NSError *enumerationError) { (void)url; (void)enumerationError; enumerationFailed = YES; return NO; }];
@@ -214,6 +234,27 @@ static NSString *ATMStagedPayloadVerificationFailure(NSURL *stage, NSString *pay
     }
     if (enumerationFailed) return @"enumeration";
     if (![seenFiles isEqualToSet:expectedFiles] || ![seenDirectories isEqualToSet:expectedDirectories]) return @"missing-entry";
+    return nil;
+}
+
+static NSString *ATMNormalizeStagedPayloadModes(NSURL *stage, NSString *payloadRoot, NSArray<NSString *> *safePaths, NSArray<NSString *> *directoryPaths, NSString *chmodTool) {
+    NSArray<NSString *> *requiredDirectories = ATMRequiredDirectoryPaths(safePaths, directoryPaths);
+    if (!requiredDirectories) return @"source";
+    NSMutableArray<NSString *> *items = [NSMutableArray arrayWithArray:requiredDirectories];
+    [items addObjectsFromArray:safePaths ?: @[]];
+    for (NSString *relativePath in items) {
+        NSString *sourcePath = [payloadRoot isEqualToString:@"/"] ? [@"/" stringByAppendingString:relativePath] : [payloadRoot stringByAppendingPathComponent:relativePath];
+        NSString *destinationPath = [stage.path stringByAppendingPathComponent:relativePath];
+        struct stat sourceInfo, destinationInfo;
+        if (lstat(sourcePath.fileSystemRepresentation, &sourceInfo) != 0) return @"source";
+        if (lstat(destinationPath.fileSystemRepresentation, &destinationInfo) != 0) return @"missing-entry";
+        if ((sourceInfo.st_mode & S_IFMT) != (destinationInfo.st_mode & S_IFMT)) return @"type";
+        if (S_ISLNK(sourceInfo.st_mode)) continue;
+        mode_t mode = sourceInfo.st_mode & 07777;
+        if (chmod(destinationPath.fileSystemRepresentation, mode) == 0) continue;
+        NSString *modeString = [NSString stringWithFormat:@"%04o", mode];
+        if (!chmodTool.length || [ATMRunBackupToolWithPrivilege(chmodTool, @[modeString, destinationPath], YES, nil)[@"exitCode"] integerValue] != 0) return @"mode";
+    }
     return nil;
 }
 
@@ -455,15 +496,18 @@ static NSData *ATMDecryptArchive(NSData *container, NSString *password, NSError 
 - (BOOL)stagePayloadDirectlyFromRoot:(NSString *)payloadRoot paths:(NSArray<NSString *> *)safePaths directories:(NSArray<NSString *> *)directoryPaths stage:(NSURL *)stage failureStage:(NSString **)failureStage {
     NSString *copy = [self backupExecutableForPaths:@[@"/bin/cp", @"/usr/bin/cp"]];
     NSString *compare = [self backupExecutableForPaths:@[@"/usr/bin/cmp", @"/bin/cmp"]];
+    NSString *chmodTool = [self backupExecutableForPaths:@[@"/bin/chmod", @"/usr/bin/chmod"]];
     if (!copy.length) { if (failureStage) *failureStage = @"direct-copy-tools"; return NO; }
-    if (!ATMResetAndPreparePayloadStage(stage, payloadRoot, directoryPaths, failureStage)) return NO;
+    if (!ATMResetAndPreparePayloadStage(stage, payloadRoot, safePaths, directoryPaths, failureStage)) return NO;
     for (NSString *relativePath in safePaths) {
         if (self.backupCancellationRequested) { if (failureStage) *failureStage = @"cancelled"; return NO; }
         NSString *sourcePath = [payloadRoot isEqualToString:@"/"] ? [@"/" stringByAppendingString:relativePath] : [payloadRoot stringByAppendingPathComponent:relativePath];
         NSString *destinationPath = [stage.path stringByAppendingPathComponent:relativePath];
-        NSDictionary *copyResult = ATMRunBackupToolWithPrivilege(copy, @[@"-pP", sourcePath, destinationPath], YES, nil);
+        NSDictionary *copyResult = ATMRunBackupToolWithPrivilege(copy, @[@"-P", sourcePath, destinationPath], YES, nil);
         if ([copyResult[@"exitCode"] integerValue] != 0) { if (failureStage) *failureStage = @"direct-copy"; return NO; }
     }
+    NSString *normalizationFailure = ATMNormalizeStagedPayloadModes(stage, payloadRoot, safePaths, directoryPaths, chmodTool);
+    if (normalizationFailure) { if (failureStage) *failureStage = ATMVerificationStage(@"direct-copy-verify", normalizationFailure); return NO; }
     NSString *verificationFailure = ATMStagedPayloadVerificationFailure(stage, payloadRoot, safePaths, directoryPaths, compare);
     if (verificationFailure) { if (failureStage) *failureStage = ATMVerificationStage(@"direct-copy-verify", verificationFailure); return NO; }
     return YES;
@@ -476,7 +520,8 @@ static NSData *ATMDecryptArchive(NSData *container, NSString *password, NSError 
         return @{ @"passed": @NO, @"stage": @"preflight-workspace", @"privacy": @"fixed-stage-labels-only" };
     }
     NSURL *payloadRoot = [root URLByAppendingPathComponent:@"payload" isDirectory:YES], *sourceDirectory = [payloadRoot URLByAppendingPathComponent:@"usr/lib/aaz-preflight" isDirectory:YES];
-    NSURL *stage = [root URLByAppendingPathComponent:@"stage" isDirectory:YES], *executable = [sourceDirectory URLByAppendingPathComponent:@"probe"], *link = [sourceDirectory URLByAppendingPathComponent:@"probe-link"];
+    NSURL *directStage = [root URLByAppendingPathComponent:@"direct-stage" isDirectory:YES], *fallbackStage = [root URLByAppendingPathComponent:@"fallback-stage" isDirectory:YES], *stage = nil;
+    NSURL *executable = [sourceDirectory URLByAppendingPathComponent:@"probe"], *link = [sourceDirectory URLByAppendingPathComponent:@"probe-link"];
     NSArray<NSString *> *directories = @[@"usr", @"usr/lib", @"usr/lib/aaz-preflight"], *paths = @[@"usr/lib/aaz-preflight/probe", @"usr/lib/aaz-preflight/probe-link"];
     NSString *failureStage = nil;
     NSMutableArray<NSString *> *observedStages = [NSMutableArray array];
@@ -486,26 +531,39 @@ static NSData *ATMDecryptArchive(NSData *container, NSString *password, NSError 
     if (passed && [ATMRunBackupToolWithPrivilege(dpkgDeb, @[@"--version"], YES, nil)[@"exitCode"] integerValue] != 0) { passed = NO; failureStage = @"preflight-persona"; }
     NSData *probeData = [@"AAZ safe preflight\n" dataUsingEncoding:NSUTF8StringEncoding];
     if (passed && (![NSFileManager.defaultManager createDirectoryAtURL:sourceDirectory withIntermediateDirectories:YES attributes:nil error:nil] || ![probeData writeToURL:executable options:NSDataWritingAtomic error:nil] || chmod(executable.path.fileSystemRepresentation, 0755) != 0 || symlink("probe", link.path.fileSystemRepresentation) != 0)) { passed = NO; failureStage = @"preflight-staging"; }
-    if (passed && ![self stagePayloadDirectlyFromRoot:payloadRoot.path paths:paths directories:directories stage:stage failureStage:&failureStage]) {
-        if ([failureStage isEqualToString:@"cancelled"]) {
-            passed = NO;
-        } else {
-            if (failureStage.length) [observedStages addObject:[@"preflight-direct-" stringByAppendingString:failureStage]];
-            NSString *tar = [self backupExecutableForPaths:@[@"/usr/bin/tar", @"/bin/tar"]];
-            NSURL *fileList = [root URLByAppendingPathComponent:@"preflight-files"], *tarURL = [root URLByAppendingPathComponent:@"preflight.tar"];
-            NSData *fileListData = [[[[paths componentsJoinedByString:@"\n"] stringByAppendingString:@"\n"] dataUsingEncoding:NSUTF8StringEncoding] copy];
-            if (!tar.length || ![fileListData writeToURL:fileList options:NSDataWritingAtomic error:nil] || !ATMResetAndPreparePayloadStage(stage, payloadRoot.path, directories, &failureStage)) {
-                passed = NO; failureStage = @"preflight-fallback-staging";
-            } else if ([ATMRunBackupToolWithPrivilege(tar, @[@"-c", @"-p", @"-f", tarURL.path, @"-C", payloadRoot.path, @"-T", fileList.path], YES, nil)[@"exitCode"] integerValue] != 0) {
-                passed = NO; failureStage = @"preflight-fallback-create";
-            } else if ([ATMRunBackupToolWithPrivilege(tar, @[@"-x", @"-p", @"-f", tarURL.path, @"-C", stage.path], YES, nil)[@"exitCode"] integerValue] != 0) {
-                passed = NO; failureStage = @"preflight-fallback-extract";
-            } else {
-                NSString *compare = [self backupExecutableForPaths:@[@"/usr/bin/cmp", @"/bin/cmp"]];
-                NSString *verificationFailure = ATMStagedPayloadVerificationFailure(stage, payloadRoot.path, paths, directories, compare);
-                if (verificationFailure) { passed = NO; failureStage = ATMVerificationStage(@"preflight-fallback-verify", verificationFailure); }
-            }
+    BOOL directSucceeded = NO, fallbackSucceeded = NO;
+    if (passed) {
+        NSString *directFailure = nil;
+        directSucceeded = [self stagePayloadDirectlyFromRoot:payloadRoot.path paths:paths directories:directories stage:directStage failureStage:&directFailure];
+        if (!directSucceeded && [directFailure isEqualToString:@"cancelled"]) { passed = NO; failureStage = @"cancelled"; }
+        else if (!directSucceeded && directFailure.length) {
+            NSString *reportedDirectStage = [directFailure hasPrefix:@"direct-copy"] ? [@"preflight-" stringByAppendingString:directFailure] : [@"preflight-direct-" stringByAppendingString:directFailure];
+            [observedStages addObject:reportedDirectStage];
         }
+    }
+    if (passed) {
+        NSString *tar = [self backupExecutableForPaths:@[@"/usr/bin/tar", @"/bin/tar"]];
+        NSURL *fileList = [root URLByAppendingPathComponent:@"preflight-files"], *tarURL = [root URLByAppendingPathComponent:@"preflight.tar"];
+        NSData *fileListData = [[[[paths componentsJoinedByString:@"\n"] stringByAppendingString:@"\n"] dataUsingEncoding:NSUTF8StringEncoding] copy];
+        NSString *fallbackFailure = nil;
+        if (!tar.length || ![fileListData writeToURL:fileList options:NSDataWritingAtomic error:nil] || !ATMResetAndPreparePayloadStage(fallbackStage, payloadRoot.path, paths, directories, &fallbackFailure)) {
+            fallbackFailure = @"preflight-fallback-staging";
+        } else if ([ATMRunBackupToolWithPrivilege(tar, @[@"-c", @"-p", @"-f", tarURL.path, @"-C", payloadRoot.path, @"-T", fileList.path], YES, nil)[@"exitCode"] integerValue] != 0) {
+            fallbackFailure = @"preflight-fallback-create";
+        } else if ([ATMRunBackupToolWithPrivilege(tar, @[@"-x", @"-m", @"-f", tarURL.path, @"-C", fallbackStage.path], YES, nil)[@"exitCode"] integerValue] != 0) {
+            fallbackFailure = @"preflight-fallback-extract";
+        } else {
+            NSString *compare = [self backupExecutableForPaths:@[@"/usr/bin/cmp", @"/bin/cmp"]];
+            NSString *chmodTool = [self backupExecutableForPaths:@[@"/bin/chmod", @"/usr/bin/chmod"]];
+            NSString *normalizationFailure = ATMNormalizeStagedPayloadModes(fallbackStage, payloadRoot.path, paths, directories, chmodTool);
+            if (normalizationFailure) fallbackFailure = ATMVerificationStage(@"preflight-fallback-verify", normalizationFailure);
+            NSString *verificationFailure = fallbackFailure ? nil : ATMStagedPayloadVerificationFailure(fallbackStage, payloadRoot.path, paths, directories, compare);
+            if (verificationFailure) fallbackFailure = ATMVerificationStage(@"preflight-fallback-verify", verificationFailure);
+        }
+        fallbackSucceeded = !fallbackFailure.length;
+        if (!fallbackSucceeded) [observedStages addObject:fallbackFailure];
+        if (!directSucceeded && !fallbackSucceeded) { passed = NO; failureStage = fallbackFailure ?: @"preflight-unknown"; }
+        else stage = directSucceeded ? directStage : fallbackStage;
     }
     NSURL *debian = [stage URLByAppendingPathComponent:@"DEBIAN" isDirectory:YES], *controlURL = [debian URLByAppendingPathComponent:@"control"], *debURL = [root URLByAppendingPathComponent:@"preflight.deb"];
     NSData *controlData = [@"Package: com.aaz.preflight\nVersion: 1\nArchitecture: iphoneos-arm64\nDescription: AAZ safe synthetic preflight\nMaintainer: AAZ\n" dataUsingEncoding:NSUTF8StringEncoding];
@@ -565,12 +623,15 @@ static NSData *ATMDecryptArchive(NSData *container, NSString *password, NSError 
     if (!staged && ![directFailure isEqualToString:@"cancelled"]) {
         if (directFailure.length) [observed addObject:directFailure];
         if (observedFailureStages) *observedFailureStages = [observed copy];
-        if (!ATMResetAndPreparePayloadStage(stage, payloadRoot, directoryPaths, failureStage)) return nil;
+        if (!ATMResetAndPreparePayloadStage(stage, payloadRoot, safePaths, directoryPaths, failureStage)) return nil;
         NSDictionary *archive = ATMRunBackupToolWithPrivilege(tar, @[@"-c", @"-p", @"-f", tarURL.path, @"-C", payloadRoot, @"-T", fileListURL.path], YES, nil);
         if ([archive[@"exitCode"] integerValue] != 0) { if (failureStage) *failureStage = @"archive-fallback-create"; return nil; }
-        NSDictionary *extract = ATMRunBackupToolWithPrivilege(tar, @[@"-x", @"-p", @"-f", tarURL.path, @"-C", stage.path], YES, nil);
+        NSDictionary *extract = ATMRunBackupToolWithPrivilege(tar, @[@"-x", @"-m", @"-f", tarURL.path, @"-C", stage.path], YES, nil);
         if ([extract[@"exitCode"] integerValue] != 0) { if (failureStage) *failureStage = @"archive-fallback-extract"; return nil; }
         NSString *compare = [self backupExecutableForPaths:@[@"/usr/bin/cmp", @"/bin/cmp"]];
+        NSString *chmodTool = [self backupExecutableForPaths:@[@"/bin/chmod", @"/usr/bin/chmod"]];
+        NSString *normalizationFailure = ATMNormalizeStagedPayloadModes(stage, payloadRoot, safePaths, directoryPaths, chmodTool);
+        if (normalizationFailure) { if (failureStage) *failureStage = ATMVerificationStage(@"archive-fallback-verify", normalizationFailure); return nil; }
         NSString *verificationFailure = ATMStagedPayloadVerificationFailure(stage, payloadRoot, safePaths, directoryPaths, compare);
         if (verificationFailure) { if (failureStage) *failureStage = ATMVerificationStage(@"archive-fallback-verify", verificationFailure); return nil; }
     } else if (!staged) {
@@ -654,7 +715,7 @@ static NSData *ATMDecryptArchive(NSData *container, NSString *password, NSError 
             if (error) *error = ATMBackupError(90, @"Backup cancelled. Temporary data was removed and no package or source data was changed.");
             return nil;
         }
-        preflightFailureCounts[@"preflight"] = @1;
+        preflightFailureCounts[@"preflight-warning"] = @1;
         preflightFailureCounts[preflightStage] = @1;
         if (progressHandler) progressHandler(@"Safe check warning; continuing backup", 1, 1);
     } else if (preflightStages.count) {
