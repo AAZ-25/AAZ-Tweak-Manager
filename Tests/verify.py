@@ -2,6 +2,9 @@
 from pathlib import Path
 import plistlib
 import re
+import subprocess
+import tarfile
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -22,7 +25,7 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "40"
+assert info["CFBundleVersion"] == "41"
 assert info["LSSupportsOpeningDocumentsInPlace"] is False
 assert "CFBundleDocumentTypes" not in info
 
@@ -42,7 +45,7 @@ assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["Ap
 with (ROOT / "Extension/Resources/Info.plist").open("rb") as handle:
     extension_info = plistlib.load(handle)
 assert extension_info["CFBundleIdentifier"] == "com.aaz.tweakmanager.importer"
-assert extension_info["CFBundleVersion"] == "40"
+assert extension_info["CFBundleVersion"] == "41"
 assert extension_info["CFBundlePackageType"] == "XPC!"
 extension_definition = extension_info["NSExtension"]
 assert extension_definition["NSExtensionPointIdentifier"] == "com.apple.share-services"
@@ -60,7 +63,7 @@ assert extension_entitlements == {
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta40" in control
+assert "Version: 0.1.0~beta41" in control
 assert "Priority: optional" in control
 
 excluded_directories = {".git", ".theos-build", "packages"}
@@ -119,7 +122,7 @@ assert "kCCHmacAlgSHA256" in all_text
 assert "SecRandomCopyBytes" in all_text
 assert "passwords are never stored" in all_text.lower()
 assert "Import" in all_text
-assert "The backup failed integrity validation and was not imported." in all_text
+assert "The backup failed payload integrity validation and was not imported." in all_text
 assert "Backup Details" in all_text
 assert "Backup Verified" in all_text
 assert "ATMBackupDetailsController" in all_text
@@ -307,7 +310,7 @@ assert 'ATMRunBackupToolWithPrivilege(dpkgQuery, @[@"--listfiles", record.packag
 for required_automatic_capture_guard in (
     'packagesIncludingDependenciesForSelected', 'installedPackageCanBeRepackedWithoutPrivateData',
     'record.provides = fields[@"Provides"]', '[record.provides componentsSeparatedByString:@","]',
-    '@"--listfiles"', '@"--control-list"', '@"--control-show"', '@"md5sums"', '@"--verify"', '@"--no-recursion"', '@"-xpf"', '@"--build"', '@"verified-repack"',
+    '@"--listfiles"', '@"--control-list"', '@"--control-show"', '@"md5sums"', '@"--verify"', '@"-xpf"', '@"--build"', '@"verified-repack"',
     'repackInventoryForRecord', 'rootedMatches > directMatches', 'S_ISDIR(info.st_mode)',
     '@"supportingDependency"', '@"/var/mobile"', '@"/Library/Preferences"',
     'restoreSanitizedSources', '@"R40-SOURCE-RESTORE"', '@"sourcesToRestore"',
@@ -321,7 +324,31 @@ assert 'isPendingPackagePayloadURL' in all_text
 assert "filenames, paths, providers, passwords, or archive contents" in all_text
 assert 'Portable Backup Verified' in all_text
 assert 'Backup Not Portable' in all_text
-assert 'The backup failed integrity validation and was not imported.' in all_text
+assert '@"directories": directoryPaths.array' in all_text
+assert '@"archive-create"' in all_text
+assert '@"archive-extract"' in all_text
+assert '@"--no-recursion"' not in backup_manager_text
+assert 'packageHashFailureCount' in all_text
+assert 'sourceHashFailureCount' in all_text
+assert 'archive-validation-failed' in all_text
+assert 'package-hash-failed' in all_text
+assert 'source-hash-failed' in all_text
+assert 'Privacy-Safe Report' in all_text
+assert 'privacy=counts-and-fixed-stage-labels-only' in all_text
+
+with tempfile.TemporaryDirectory() as temporary:
+    temporary_root = Path(temporary)
+    payload_root = temporary_root / "payload"
+    shared = payload_root / "shared"
+    shared.mkdir(parents=True)
+    (shared / "wanted").write_text("wanted")
+    (shared / "not-listed").write_text("private")
+    file_list = temporary_root / "payload-files"
+    file_list.write_text("shared/wanted\n")
+    archive = temporary_root / "payload.tar"
+    subprocess.run(["tar", "-cpf", str(archive), "-C", str(payload_root), "-T", str(file_list)], check=True, capture_output=True)
+    with tarfile.open(archive) as handle:
+        assert handle.getnames() == ["shared/wanted"], "archive capture recursed beyond the verified file list"
 assert 'Only a healthy backup can be imported' not in all_text
 assert "Already Imported" in all_text
 assert "NSFileCoordinator" in all_text

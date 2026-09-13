@@ -73,6 +73,25 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
     [controller presentViewController:alert animated:YES completion:nil];
 }
 
+static NSURL *ATMWriteBackupSummaryReport(NSDictionary *report, NSError **error) {
+    NSDictionary *info = NSBundle.mainBundle.infoDictionary;
+    NSDictionary *manifest = [report[@"manifest"] isKindOfClass:NSDictionary.class] ? report[@"manifest"] : @{};
+    NSDictionary *failures = [report[@"captureFailureCounts"] isKindOfClass:NSDictionary.class] ? report[@"captureFailureCounts"] : @{};
+    NSArray<NSString *> *stageKeys = @[@"inventory", @"payload", @"privacy", @"verification", @"tools", @"staging", @"directory-staging", @"archive", @"archive-create", @"archive-extract", @"control", @"build", @"identity", @"unknown"];
+    NSMutableString *text = [NSMutableString stringWithFormat:
+        @"AAZ Tweak Manager Backup Report\nformat=1\nappVersion=%@\nappBuild=%@\nhealth=%@\nportable=%@\npackages=%@\nsources=%@\nrestorableSources=%@\nembeddedDEBs=%@\nsafelyRepacked=%@\nportableCoverage=%@\npayloadUnavailable=%@\nbadHashes=%@\npackageHashFailures=%@\nsourceHashFailures=%@\nunreadableEntries=%@\n",
+        info[@"CFBundleShortVersionString"] ?: @"unknown", info[@"CFBundleVersion"] ?: @"unknown",
+        report[@"health"] ?: @"unknown", [report[@"portable"] boolValue] ? @"yes" : @"no",
+        report[@"packageCount"] ?: @0, report[@"sourceCount"] ?: @0, report[@"restorableSourceCount"] ?: @0,
+        report[@"cachedDEBCount"] ?: @0, report[@"repackedDEBCount"] ?: @0, manifest[@"payloadCoverage"] ?: @0,
+        report[@"missingPayloadCount"] ?: @0, report[@"badHashCount"] ?: @0, report[@"packageHashFailureCount"] ?: @0,
+        report[@"sourceHashFailureCount"] ?: @0, report[@"unreadableEntryCount"] ?: @0];
+    for (NSString *key in stageKeys) [text appendFormat:@"capture.%@=%@\n", key, failures[key] ?: @0];
+    [text appendString:@"privacy=counts-and-fixed-stage-labels-only\n"];
+    NSURL *url = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:@"AAZ-Backup-Report.txt"]];
+    return [text writeToURL:url atomically:YES encoding:NSUTF8StringEncoding error:error] ? url : nil;
+}
+
 static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString *detailText) {
     UIImageView *icon = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:symbol]];
     icon.tintColor = UIColor.systemBlueColor; icon.contentMode = UIViewContentModeScaleAspectFit;
@@ -419,6 +438,7 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
 @property(nonatomic, copy) NSArray<NSDictionary *> *sections;
 @property(nonatomic, copy) dispatch_block_t checkPlanHandler;
 @property(nonatomic, copy) dispatch_block_t shareHandler;
+@property(nonatomic, copy) dispatch_block_t shareReportHandler;
 @property(nonatomic, copy, nullable) dispatch_block_t compareHandler;
 - (instancetype)initWithReport:(NSDictionary *)report
                           ready:(NSUInteger)ready
@@ -463,7 +483,7 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
             NSDictionary *failures = [report[@"captureFailureCounts"] isKindOfClass:NSDictionary.class] ? report[@"captureFailureCounts"] : @{};
             NSUInteger inventoryFailures = [failures[@"inventory"] unsignedIntegerValue] + [failures[@"payload"] unsignedIntegerValue];
             NSUInteger safetyFailures = [failures[@"privacy"] unsignedIntegerValue] + [failures[@"verification"] unsignedIntegerValue];
-            NSUInteger toolFailures = [failures[@"tools"] unsignedIntegerValue] + [failures[@"staging"] unsignedIntegerValue] + [failures[@"archive"] unsignedIntegerValue];
+            NSUInteger toolFailures = [failures[@"tools"] unsignedIntegerValue] + [failures[@"staging"] unsignedIntegerValue] + [failures[@"directory-staging"] unsignedIntegerValue] + [failures[@"archive"] unsignedIntegerValue] + [failures[@"archive-create"] unsignedIntegerValue] + [failures[@"archive-extract"] unsignedIntegerValue];
             NSUInteger packageFailures = [failures[@"control"] unsignedIntegerValue] + [failures[@"build"] unsignedIntegerValue] + [failures[@"identity"] unsignedIntegerValue] + [failures[@"unknown"] unsignedIntegerValue];
             [sections addObject:@{ @"title": @"CAPTURE CHECKS (COUNTS ONLY)", @"items": @[
                 @{ @"title": @"Inventory or File Missing", @"value": [@(inventoryFailures) description], @"symbol": @"doc.badge.questionmark" },
@@ -492,7 +512,14 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
     self.tableView.tableHeaderView = header;
 }
 - (void)closeDetails { [self dismissViewControllerAnimated:YES completion:nil]; }
-- (void)shareBackup { dispatch_block_t handler = self.shareHandler; [self dismissViewControllerAnimated:YES completion:handler]; }
+- (void)shareBackup {
+    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"Share" message:@"Choose the backup file or one privacy-safe full report." preferredStyle:UIAlertControllerStyleActionSheet];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Backup File" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) { dispatch_block_t handler = self.shareHandler; [self dismissViewControllerAnimated:YES completion:handler]; }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Privacy-Safe Report" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) { dispatch_block_t handler = self.shareReportHandler; [self dismissViewControllerAnimated:YES completion:handler]; }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    sheet.popoverPresentationController.barButtonItem = self.navigationItem.rightBarButtonItem;
+    [self presentViewController:sheet animated:YES completion:nil];
+}
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { (void)tableView; return 1 + self.sections.count; }
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     (void)tableView;
@@ -585,6 +612,11 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
     ATMBackupDetailsController *details = [[ATMBackupDetailsController alloc] initWithReport:report ready:ready missing:missing different:different unavailable:unavailable];
     __weak typeof(self) weakSelf = self; __weak ATMBackupDetailsController *weakDetails = details;
     details.shareHandler = ^{ [weakSelf shareURL:url]; };
+    details.shareReportHandler = ^{
+        NSError *reportError = nil; NSURL *reportURL = ATMWriteBackupSummaryReport(report, &reportError);
+        if (!reportURL) { ATMShowError(weakSelf, @"Report unavailable", reportError); return; }
+        [weakSelf shareURL:reportURL];
+    };
     details.checkPlanHandler = ^{ [weakDetails dismissViewControllerAnimated:YES completion:^{ [weakSelf checkRestorePlanForManifest:manifest backupURL:url password:password]; }]; };
     if (comparisonURL) details.compareHandler = ^{ [weakDetails dismissViewControllerAnimated:YES completion:^{ [weakSelf compareBackup:comparisonURL with:url]; }]; };
     UINavigationController *navigation = [[UINavigationController alloc] initWithRootViewController:details]; navigation.modalPresentationStyle = UIModalPresentationFormSheet; [self presentViewController:navigation animated:YES completion:nil];

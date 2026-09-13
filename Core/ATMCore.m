@@ -356,7 +356,8 @@ static BOOL ATMImportDiagnosticStageAllowed(NSString *stage) {
             @"coordination-fallback-started", @"coordination-accessor-called", @"invalid-selection", @"destination-unavailable",
             @"copy-coordinating", @"source-read-failed", @"destination-write-failed",
             @"coordination-failed", @"empty-file", @"staged", @"validating", @"duplicate",
-            @"validation-failed", @"finalize-failed", @"completed"
+            @"validation-failed", @"archive-validation-failed", @"package-hash-failed",
+            @"source-hash-failed", @"entry-integrity-failed", @"finalize-failed", @"completed"
         ]];
     });
     return [stage isKindOfClass:NSString.class] && [allowedStages containsObject:stage];

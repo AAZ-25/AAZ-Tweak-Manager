@@ -19,7 +19,7 @@ case "$phase" in
   metadata)
     test -f "$deb"
     test "$(dpkg-deb -f "$deb" Package)" = "com.aaz.tweakmanager"
-    test "$(dpkg-deb -f "$deb" Version)" = "0.1.0~beta40"
+    test "$(dpkg-deb -f "$deb" Version)" = "0.1.0~beta41"
     test "$(dpkg-deb -f "$deb" Architecture)" = "iphoneos-arm64"
     dpkg-deb -c "$deb" > "$package_list"
     ;;
@@ -65,10 +65,10 @@ assert extension_entitlements == {
     "application-identifier": "com.aaz.tweakmanager.importer",
     "com.apple.security.application-groups": ["group.com.aaz.tweakmanager"],
 }
-assert app_info["CFBundleVersion"] == "40"
+assert app_info["CFBundleVersion"] == "41"
 assert "CFBundleDocumentTypes" not in app_info
 assert extension_info["CFBundleIdentifier"] == "com.aaz.tweakmanager.importer"
-assert extension_info["CFBundleVersion"] == "40"
+assert extension_info["CFBundleVersion"] == "41"
 definition = extension_info["NSExtension"]
 assert definition["NSExtensionPointIdentifier"] == "com.apple.share-services"
 assert definition["NSExtensionPrincipalClass"] == "AAZShareViewController"
@@ -137,7 +137,11 @@ PY
     grep -Fq 'group.com.aaz.tweakmanager' "$RUNNER_TEMP/aaz-extension.strings"
     grep -Fq 'x.com/_kkk2' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'Backup Created: Limited Restore' "$RUNNER_TEMP/aaz-app.strings"
-    grep -Fq 'The backup failed integrity validation and was not imported.' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'The backup failed payload integrity validation and was not imported.' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'Privacy-Safe Report' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'archive-validation-failed' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'package-hash-failed' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'source-hash-failed' "$RUNNER_TEMP/aaz-app.strings"
     ;;
   stage)
     cp "$deb" AAZ-Tweak-Manager-rootless.deb
