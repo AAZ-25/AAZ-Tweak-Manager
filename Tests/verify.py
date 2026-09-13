@@ -27,7 +27,7 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "46"
+assert info["CFBundleVersion"] == "47"
 assert info["LSSupportsOpeningDocumentsInPlace"] is False
 assert "CFBundleDocumentTypes" not in info
 
@@ -47,7 +47,7 @@ assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["Ap
 with (ROOT / "Extension/Resources/Info.plist").open("rb") as handle:
     extension_info = plistlib.load(handle)
 assert extension_info["CFBundleIdentifier"] == "com.aaz.tweakmanager.importer"
-assert extension_info["CFBundleVersion"] == "46"
+assert extension_info["CFBundleVersion"] == "47"
 assert extension_info["CFBundlePackageType"] == "XPC!"
 extension_definition = extension_info["NSExtension"]
 assert extension_definition["NSExtensionPointIdentifier"] == "com.apple.share-services"
@@ -65,7 +65,7 @@ assert extension_entitlements == {
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta46" in control
+assert "Version: 0.1.0~beta47" in control
 assert "Priority: optional" in control
 assert "Depends: firmware (>= 15.0), coreutils, diffutils, dpkg, tar" in control
 
@@ -314,7 +314,7 @@ for required_automatic_capture_guard in (
     'packagesIncludingDependenciesForSelected', 'installedPackageCanBeRepackedWithoutPrivateData',
     'record.provides = fields[@"Provides"]', '[record.provides componentsSeparatedByString:@","]',
     '@"--listfiles"', '@"--control-list"', '@"--control-show"', '@"md5sums"', '@"--verify"', '@"-x"', '@"--build"', '@"verified-repack"',
-    'repackInventoryForRecord', 'rootedMatches > directMatches', 'S_ISDIR(info.st_mode)',
+    'repackInventoryForRecord', 'rootedMatches == listedPaths.count', 'S_ISDIR(info.st_mode)',
     '@"supportingDependency"', '@"/var/mobile"', '@"/Library/Preferences"',
     'restoreSanitizedSources', '@"R40-SOURCE-RESTORE"', '@"sourcesToRestore"',
     '@"privateSourcesSkipped"', '@"aaztm-%@.%@"', 'entry[@"restorable"] = @(!source.credentialsRedacted)',
@@ -347,6 +347,15 @@ assert 'ATMStagedPayloadVerificationFailure' in backup_manager_text
 assert 'ATMVerificationStage' in backup_manager_text
 assert 'ATMRequiredDirectoryPaths' in backup_manager_text
 assert 'ATMNormalizeStagedPayloadModes' in backup_manager_text
+assert 'pathsWithListedDescendants' in backup_manager_text
+assert 'rootedMatches == listedPaths.count' in backup_manager_text
+assert 'directMatches != listedPaths.count' in backup_manager_text
+assert '[pathsWithListedDescendants containsObject:path]' in backup_manager_text
+assert 'stat(physicalPath.fileSystemRepresentation, &resolvedInfo)' in backup_manager_text
+assert 'for (NSString *relativePath in directoryPaths ?: @[])' in backup_manager_text
+assert 'stat(sourcePath.fileSystemRepresentation, &sourceInfo)' in backup_manager_text
+assert 'if ([expectedDirectories containsObject:relativePath]) [seenDirectories addObject:relativePath];' in backup_manager_text
+assert 'if (![expectedDirectories containsObject:relativePath]) return @"unexpected-directory";' not in backup_manager_text
 assert '@"-P", sourcePath, destinationPath' in backup_manager_text
 assert '@"-pP", sourcePath, destinationPath' not in backup_manager_text
 assert '@[@"-x", @"-m", @"-f", tarURL.path' in backup_manager_text
@@ -451,6 +460,60 @@ with tempfile.TemporaryDirectory() as temporary:
         parts = Path(relative).parts
         expected_parents.update(str(Path(*parts[:index])) for index in range(1, len(parts)))
     assert expected_parents == {"one", "one/two", "one/three"}
+
+    # A Rootless redirection symlink may be a listed ancestor of package files.
+    # It must become a contained logical directory, never a symlink escape and
+    # never both a staged symlink and a directory.
+    physical_root = temporary_root / "physical-root"
+    redirected_directory = physical_root / "real-usr" / "lib" / "aaz-package"
+    redirected_directory.mkdir(parents=True)
+    redirected_payload = redirected_directory / "payload"
+    redirected_payload.write_text("rootless payload")
+    logical_root = temporary_root / "logical-root"
+    logical_root.mkdir()
+    (logical_root / "usr").symlink_to(physical_root / "real-usr", target_is_directory=True)
+    listed_paths = ["/usr", "/usr/lib/aaz-package", "/usr/lib/aaz-package/payload"]
+    listed_descendant_parents = set()
+    for listed_path in listed_paths:
+        parent = Path(listed_path).parent
+        while str(parent) != "/":
+            listed_descendant_parents.add(str(parent))
+            parent = parent.parent
+    assert "/usr" in listed_descendant_parents
+    assert (logical_root / "usr").is_symlink()
+    assert (logical_root / "usr").resolve().is_dir()
+    direct_visible_root = temporary_root / "direct-visible-root"
+    direct_visible_root.mkdir()
+    (direct_visible_root / "usr").symlink_to(logical_root / "usr", target_is_directory=True)
+    direct_matches = sum((direct_visible_root / path.lstrip("/")).exists() or (direct_visible_root / path.lstrip("/")).is_symlink() for path in listed_paths)
+    rooted_matches = sum((logical_root / path.lstrip("/")).exists() or (logical_root / path.lstrip("/")).is_symlink() for path in listed_paths)
+    assert rooted_matches == len(listed_paths)
+    assert direct_matches == len(listed_paths), "fixture must reproduce the Rootless visibility tie"
+    selected_payload_root = logical_root if rooted_matches == len(listed_paths) else direct_visible_root
+    assert selected_payload_root == logical_root
+
+    structural_stage = temporary_root / "structural-stage"
+    (structural_stage / "usr/lib/aaz-package").mkdir(parents=True)
+    subprocess.run(
+        ["cp", "-P", str(logical_root / "usr/lib/aaz-package/payload"), str(structural_stage / "usr/lib/aaz-package/payload")],
+        check=True,
+        capture_output=True,
+    )
+    assert not (structural_stage / "usr").is_symlink()
+    assert (structural_stage / "usr/lib/aaz-package/payload").read_bytes() == redirected_payload.read_bytes()
+    # Extra structural directories contain no payload bytes and are harmless;
+    # unexpected non-directory entries remain rejected by the product verifier.
+    (structural_stage / "transfer-structure").mkdir()
+    assert not any((structural_stage / "transfer-structure").iterdir())
+
+    structural_tar_list = temporary_root / "structural-files"
+    structural_tar_list.write_text("usr/lib/aaz-package/payload\n")
+    structural_tar = temporary_root / "structural.tar"
+    subprocess.run(["tar", "-cpf", str(structural_tar), "-C", str(logical_root), "-T", str(structural_tar_list)], check=True, capture_output=True)
+    structural_fallback = temporary_root / "structural-fallback"
+    (structural_fallback / "usr/lib/aaz-package").mkdir(parents=True)
+    subprocess.run(["tar", "-xmf", str(structural_tar), "-C", str(structural_fallback)], check=True, capture_output=True)
+    assert (structural_fallback / "usr/lib/aaz-package/payload").read_bytes() == redirected_payload.read_bytes()
 
     package_stage = temporary_root / "package-stage"
     shutil.copytree(direct_stage, package_stage, symlinks=True)

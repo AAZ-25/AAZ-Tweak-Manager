@@ -211,8 +211,9 @@ static NSString *ATMStagedPayloadVerificationFailure(NSURL *stage, NSString *pay
         struct stat stagedInfo;
         if (!relativePath.length || lstat(url.path.fileSystemRepresentation, &stagedInfo) != 0) return @"enumeration";
         if (S_ISDIR(stagedInfo.st_mode)) {
-            if (![expectedDirectories containsObject:relativePath]) return @"unexpected-directory";
-            [seenDirectories addObject:relativePath];
+            // Transfer tools may materialize harmless structural parents that carry no
+            // payload bytes. Unexpected non-directory entries remain rejected below.
+            if ([expectedDirectories containsObject:relativePath]) [seenDirectories addObject:relativePath];
             continue;
         }
         if (![expectedFiles containsObject:relativePath]) return @"unexpected-entry";
@@ -238,11 +239,21 @@ static NSString *ATMStagedPayloadVerificationFailure(NSURL *stage, NSString *pay
 }
 
 static NSString *ATMNormalizeStagedPayloadModes(NSURL *stage, NSString *payloadRoot, NSArray<NSString *> *safePaths, NSArray<NSString *> *directoryPaths, NSString *chmodTool) {
-    NSArray<NSString *> *requiredDirectories = ATMRequiredDirectoryPaths(safePaths, directoryPaths);
-    if (!requiredDirectories) return @"source";
-    NSMutableArray<NSString *> *items = [NSMutableArray arrayWithArray:requiredDirectories];
-    [items addObjectsFromArray:safePaths ?: @[]];
-    for (NSString *relativePath in items) {
+    // Implicit parents are staging structure, not package-owned payload entries.
+    // Their physical Rootless path can itself be a redirection symlink.
+    for (NSString *relativePath in directoryPaths ?: @[]) {
+        NSString *sourcePath = [payloadRoot isEqualToString:@"/"] ? [@"/" stringByAppendingString:relativePath] : [payloadRoot stringByAppendingPathComponent:relativePath];
+        NSString *destinationPath = [stage.path stringByAppendingPathComponent:relativePath];
+        struct stat sourceInfo, destinationInfo;
+        if (stat(sourcePath.fileSystemRepresentation, &sourceInfo) != 0) return @"source";
+        if (lstat(destinationPath.fileSystemRepresentation, &destinationInfo) != 0) return @"missing-entry";
+        if (!S_ISDIR(sourceInfo.st_mode) || !S_ISDIR(destinationInfo.st_mode)) return @"type";
+        mode_t mode = sourceInfo.st_mode & 07777;
+        if (chmod(destinationPath.fileSystemRepresentation, mode) == 0) continue;
+        NSString *modeString = [NSString stringWithFormat:@"%04o", mode];
+        if (!chmodTool.length || [ATMRunBackupToolWithPrivilege(chmodTool, @[modeString, destinationPath], YES, nil)[@"exitCode"] integerValue] != 0) return @"mode";
+    }
+    for (NSString *relativePath in safePaths ?: @[]) {
         NSString *sourcePath = [payloadRoot isEqualToString:@"/"] ? [@"/" stringByAppendingString:relativePath] : [payloadRoot stringByAppendingPathComponent:relativePath];
         NSString *destinationPath = [stage.path stringByAppendingPathComponent:relativePath];
         struct stat sourceInfo, destinationInfo;
@@ -460,10 +471,24 @@ static NSData *ATMDecryptArchive(NSData *container, NSString *password, NSError 
         NSString *rootedPath = [self.environment pathInsideRoot:path];
         if (rootedPath.length && lstat(rootedPath.fileSystemRepresentation, &info) == 0) rootedMatches++;
     }
-    NSString *payloadRoot = rootedMatches > directMatches ? self.environment.jailbreakRoot : @"/";
+    // A Rootless payload can be visible through both / and /var/jb because of
+    // bootstrap redirection symlinks. Prefer the actual jailbreak root whenever
+    // it contains the complete dpkg inventory; a numeric tie must not select /.
+    NSString *payloadRoot = (self.environment.jailbreakRoot.length && rootedMatches == listedPaths.count) ? self.environment.jailbreakRoot : @"/";
+    if ([payloadRoot isEqualToString:@"/"] && directMatches != listedPaths.count) { if (failureStage) *failureStage = @"payload"; return nil; }
     NSArray<NSString *> *privateRoots = @[@"/var/mobile", @"/private/var/mobile", @"/User", @"/home", @"/root", @"/tmp", @"/var/tmp", @"/var/log", @"/var/lib/apt", @"/var/lib/dpkg", @"/etc", @"/Library/Preferences", @"/var/jb/Library/Preferences", @"/var/jb/etc"];
     NSMutableOrderedSet<NSString *> *archivePaths = [NSMutableOrderedSet orderedSet];
     NSMutableOrderedSet<NSString *> *directoryPaths = [NSMutableOrderedSet orderedSet];
+    NSMutableSet<NSString *> *pathsWithListedDescendants = [NSMutableSet set];
+    for (NSString *listedPath in listedPaths) {
+        NSString *parent = [listedPath stringByDeletingLastPathComponent];
+        while (parent.length > 1) {
+            [pathsWithListedDescendants addObject:parent];
+            NSString *next = [parent stringByDeletingLastPathComponent];
+            if ([next isEqualToString:parent]) break;
+            parent = next;
+        }
+    }
     for (NSString *path in listedPaths) {
         NSString *physicalPath = [payloadRoot isEqualToString:@"/"] ? path : [payloadRoot stringByAppendingString:path];
         struct stat info; if (lstat(physicalPath.fileSystemRepresentation, &info) != 0) { if (failureStage) *failureStage = @"payload"; return nil; }
@@ -478,6 +503,13 @@ static NSData *ATMDecryptArchive(NSData *container, NSString *password, NSError 
         }
         NSString *relativePath = [path substringFromIndex:1];
         if (S_ISDIR(info.st_mode)) [directoryPaths addObject:relativePath];
+        else if (S_ISLNK(info.st_mode) && [pathsWithListedDescendants containsObject:path]) {
+            struct stat resolvedInfo;
+            if (stat(physicalPath.fileSystemRepresentation, &resolvedInfo) != 0 || !S_ISDIR(resolvedInfo.st_mode)) { if (failureStage) *failureStage = @"payload"; return nil; }
+            // Rootless redirection symlinks cannot coexist with listed children in
+            // a contained DEB tree; reconstruct them as logical directories.
+            [directoryPaths addObject:relativePath];
+        }
         else [archivePaths addObject:relativePath];
     }
     if (!archivePaths.count) { if (failureStage) *failureStage = @"payload"; return nil; }
