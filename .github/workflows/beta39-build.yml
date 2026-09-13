@@ -1,0 +1,160 @@
+name: Beta 39 Build
+
+on:
+  push:
+    branches:
+      - beta39-build
+
+permissions:
+  contents: write
+  actions: write
+
+env:
+  THEOS: ${{ github.workspace }}/.theos-build
+  SOURCE_SHA: 6aac3446021eb44e244a4dd20ccf1bc6728da42a
+  BASE_SHA: 541057c2b517a57e47bb6f356c9c177c3b0bb1fe
+  RELEASE_TAG: v0.1.0-beta39
+  PREVIOUS_TAG: v0.1.0-beta38
+  PREVIOUS_RELEASE_ID: "387760296"
+  PREVIOUS_ASSET_ID: "560330202"
+  PREVIOUS_ACTION_ID_1: "34730932008"
+  PREVIOUS_ACTION_ID_2: "34731277655"
+  ASSET_NAME: AAZ-Tweak-Manager-rootless.deb
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - name: Verify protected state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          repo="${GITHUB_REPOSITORY}"
+          test "$(gh api "repos/${repo}/git/ref/heads/main" --jq .object.sha)" = "${BASE_SHA}"
+          test "$(gh api "repos/${repo}/git/ref/tags/${PREVIOUS_TAG}" --jq .object.sha)" = "${BASE_SHA}"
+          test "$(gh api "repos/${repo}/releases/${PREVIOUS_RELEASE_ID}" --jq .tag_name)" = "${PREVIOUS_TAG}"
+          test "$(gh api "repos/${repo}/releases/${PREVIOUS_RELEASE_ID}" --jq .target_commitish)" = "${BASE_SHA}"
+          test "$(gh api "repos/${repo}/releases/${PREVIOUS_RELEASE_ID}" --jq '.assets | length')" = "1"
+          test "$(gh api "repos/${repo}/releases/${PREVIOUS_RELEASE_ID}" --jq '.assets[0].id')" = "${PREVIOUS_ASSET_ID}"
+          test "$(gh api "repos/${repo}/releases/${PREVIOUS_RELEASE_ID}" --jq '.assets[0].name')" = "${ASSET_NAME}"
+          if gh api "repos/${repo}/releases/tags/${RELEASE_TAG}" >/dev/null 2>&1; then exit 1; fi
+          if gh api "repos/${repo}/git/ref/tags/${RELEASE_TAG}" >/dev/null 2>&1; then exit 1; fi
+      - name: Checkout clean source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          fetch-depth: 0
+      - name: Verify source identity
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${SOURCE_SHA}"
+          test "$(git rev-parse HEAD^)" = "${BASE_SHA}"
+          test "$(git show -s --format=%s HEAD)" = "AAZ Tweak Manager"
+          test "$(git diff-tree --no-commit-id --name-only -r HEAD | sort | wc -l | tr -d ' ')" = "11"
+          test "$(find .github/workflows -maxdepth 1 -type f -exec basename {} \; | sort)" = "build.yml"
+      - name: Install build tools
+        run: |
+          set -euo pipefail
+          brew install ldid xz
+          brew install dpkg || brew link --overwrite dpkg
+      - name: Install project sources
+        run: |
+          set -euo pipefail
+          rm -rf "$THEOS"
+          git clone --filter=blob:none --no-checkout https://github.com/theos/theos.git "$THEOS"
+          git -C "$THEOS" checkout 5280bd038207e14f8bd76f5417aa2fe641c03228
+          git -C "$THEOS" submodule update --init --recursive
+          git clone --filter=blob:none --no-checkout https://github.com/theos/sdks.git "$RUNNER_TEMP/sdks"
+          git -C "$RUNNER_TEMP/sdks" checkout 0222fd5413cf4b9af096f37b4621afa2688572f7
+          cp -R "$RUNNER_TEMP/sdks/"*.sdk "$THEOS/sdks/"
+      - name: Verify source
+        run: python3 Tests/verify.py
+      - name: Verify privacy boundary
+        run: |
+          set -euo pipefail
+          changed="$(git diff-tree --no-commit-id --name-only -r HEAD | sort)"
+          expected="$(printf '%s\n' App/ATMViewControllers.m Core/ATMBackupManager.m Core/ATMCore.h Core/ATMCore.m Extension/Resources/Info.plist README.md Resources/Info.plist THIRD_PARTY.md Tests/verify.py Tests/verify_package.sh control | sort)"
+          test "$changed" = "$expected"
+          if rg -n -i '(BEGIN (RSA|OPENSSH|EC|PGP) PRIVATE KEY|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_|AKIA[0-9A-Z]{16}|xox[baprs]-|/workspace/|AAZ_PROJECT_MASTER_CONTEXT|YT Music Importer|calculatorConverter)' $changed; then exit 1; fi
+          links="$(rg -o 'https://x\.com/[A-Za-z0-9_]+' $changed | sed 's/^[^:]*://' | sort -u || true)"
+          test -z "$links" || test "$links" = "https://x.com/_kkk2"
+      - name: Build package
+        run: make clean package THEOS_PACKAGE_SCHEME=rootless FINALPACKAGE=1
+      - name: Locate package
+        run: bash Tests/verify_package.sh locate
+      - name: Verify package metadata
+        run: bash Tests/verify_package.sh metadata
+      - name: Verify package layout
+        run: bash Tests/verify_package.sh layout
+      - name: Verify bundled identities
+        run: bash Tests/verify_package.sh identities
+      - name: Verify binary architectures
+        run: bash Tests/verify_package.sh architectures
+      - name: Prepare product markers
+        run: |
+          strings "$RUNNER_TEMP/aaz-package/var/jb/Applications/AAZTweakManager.app/AAZTweakManager" > "$RUNNER_TEMP/aaz-app.strings"
+          strings "$RUNNER_TEMP/aaz-package/var/jb/Applications/AAZTweakManager.app/PlugIns/AAZBackupImporter.appex/AAZBackupImporter" > "$RUNNER_TEMP/aaz-extension.strings"
+      - name: Marker portable backup title
+        run: grep -Fq 'Create Portable Backup?' "$RUNNER_TEMP/aaz-app.strings"
+      - name: Marker automatic package capture
+        run: grep -Fq 'No manual DEB sharing is required.' "$RUNNER_TEMP/aaz-app.strings"
+      - name: Marker encrypted portable backup
+        run: grep -Fq 'Encrypted Portable Backup' "$RUNNER_TEMP/aaz-app.strings"
+      - name: Marker package vault
+        run: grep -Fq 'Package Vault' "$RUNNER_TEMP/aaz-app.strings"
+      - name: Marker portable coverage format
+        run: grep -Fq 'payloadCoverage' "$RUNNER_TEMP/aaz-app.strings"
+      - name: Marker portable verified
+        run: grep -Fq 'Portable Backup Verified' "$RUNNER_TEMP/aaz-app.strings"
+      - name: Marker backup not portable
+        run: grep -Fq 'Backup Not Portable' "$RUNNER_TEMP/aaz-app.strings"
+      - name: Marker authenticated download only
+        run: grep -Fq -- '--download-only' "$RUNNER_TEMP/aaz-app.strings"
+      - name: Marker no backup downgrade
+        run: grep -Fq 'APT::Get::Allow-Downgrades=false' "$RUNNER_TEMP/aaz-app.strings"
+      - name: Marker no held override
+        run: grep -Fq 'APT::Get::Allow-Change-Held-Packages=false' "$RUNNER_TEMP/aaz-app.strings"
+      - name: Marker package share extension
+        run: grep -Fq 'Package saved. Open AAZ Tweak Manager' "$RUNNER_TEMP/aaz-extension.strings"
+      - name: Marker portable import policy
+        run: grep -Fq 'Only a verified Portable Backup with 100% DEB coverage can be imported.' "$RUNNER_TEMP/aaz-app.strings"
+      - name: Verify all product markers
+        run: bash Tests/verify_package.sh markers
+      - name: Stage verified package
+        run: bash Tests/verify_package.sh stage
+      - name: Publish, verify, align, and clean
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          repo="${GITHUB_REPOSITORY}"
+          local_deb="${GITHUB_WORKSPACE}/${ASSET_NAME}"
+          local_size="$(stat -f%z "${local_deb}")"
+          local_sha="$(shasum -a 256 "${local_deb}" | awk '{print $1}')"
+          gh release create "${RELEASE_TAG}" "${local_deb}" --repo "${repo}" --target "${SOURCE_SHA}" --title "AAZ Tweak Manager Beta 38" --notes "Rootless beta creating automatic portable backups with verified original or safely reconstructed package payloads and sanitized public source restoration. Device runtime verification is still required." --prerelease
+          mkdir -p "$RUNNER_TEMP/public"
+          gh release download "${RELEASE_TAG}" --repo "${repo}" --pattern "${ASSET_NAME}" --dir "$RUNNER_TEMP/public"
+          cmp -s "${local_deb}" "$RUNNER_TEMP/public/${ASSET_NAME}"
+          test "$(stat -f%z "$RUNNER_TEMP/public/${ASSET_NAME}")" = "${local_size}"
+          test "$(shasum -a 256 "$RUNNER_TEMP/public/${ASSET_NAME}" | awk '{print $1}')" = "${local_sha}"
+          test "$(gh api "repos/${repo}/releases/tags/${RELEASE_TAG}" --jq .target_commitish)" = "${SOURCE_SHA}"
+          test "$(gh api "repos/${repo}/releases/tags/${RELEASE_TAG}" --jq '.draft')" = "false"
+          test "$(gh api "repos/${repo}/releases/tags/${RELEASE_TAG}" --jq '.prerelease')" = "true"
+          test "$(gh api "repos/${repo}/releases/tags/${RELEASE_TAG}" --jq '.assets | length')" = "1"
+          test "$(gh api "repos/${repo}/releases/tags/${RELEASE_TAG}" --jq '.assets[0].name')" = "${ASSET_NAME}"
+          test "$(gh api "repos/${repo}/releases/tags/${RELEASE_TAG}" --jq '.assets[0].size')" = "${local_size}"
+          git fetch origin main
+          test "$(git rev-parse origin/main)" = "${BASE_SHA}"
+          git merge-base --is-ancestor "${BASE_SHA}" "${SOURCE_SHA}"
+          git push origin "${SOURCE_SHA}:refs/heads/main"
+          test "$(gh api "repos/${repo}/git/ref/heads/main" --jq .object.sha)" = "${SOURCE_SHA}"
+          gh release delete "${PREVIOUS_TAG}" --repo "${repo}" --cleanup-tag --yes
+          if gh api "repos/${repo}/releases/tags/${PREVIOUS_TAG}" >/dev/null 2>&1; then exit 1; fi
+          if gh api "repos/${repo}/git/ref/tags/${PREVIOUS_TAG}" >/dev/null 2>&1; then exit 1; fi
+          gh api -X DELETE "repos/${repo}/actions/runs/${PREVIOUS_ACTION_ID_1}"
+          gh api -X DELETE "repos/${repo}/actions/runs/${PREVIOUS_ACTION_ID_2}"
+          if gh api "repos/${repo}/actions/runs/${PREVIOUS_ACTION_ID_1}" >/dev/null 2>&1; then exit 1; fi
+          if gh api "repos/${repo}/actions/runs/${PREVIOUS_ACTION_ID_2}" >/dev/null 2>&1; then exit 1; fi
+          git push origin --delete beta39-build
