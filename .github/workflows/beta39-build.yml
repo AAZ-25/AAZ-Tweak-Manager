@@ -11,7 +11,7 @@ permissions:
 
 env:
   THEOS: ${{ github.workspace }}/.theos-build
-  SOURCE_SHA: 6aac3446021eb44e244a4dd20ccf1bc6728da42a
+  SOURCE_SHA: 89a5d6de63202468d9f66a0cb655dd30bae17ef6
   BASE_SHA: 541057c2b517a57e47bb6f356c9c177c3b0bb1fe
   RELEASE_TAG: v0.1.0-beta39
   PREVIOUS_TAG: v0.1.0-beta38
@@ -19,6 +19,7 @@ env:
   PREVIOUS_ASSET_ID: "560330202"
   PREVIOUS_ACTION_ID_1: "34730932008"
   PREVIOUS_ACTION_ID_2: "34731277655"
+  PREVIOUS_ACTION_ID_3: "34733780113"
   ASSET_NAME: AAZ-Tweak-Manager-rootless.deb
 
 jobs:
@@ -52,7 +53,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "${SOURCE_SHA}"
           test "$(git rev-parse HEAD^)" = "${BASE_SHA}"
           test "$(git show -s --format=%s HEAD)" = "AAZ Tweak Manager"
-          test "$(git diff-tree --no-commit-id --name-only -r HEAD | sort | wc -l | tr -d ' ')" = "11"
+          test "$(git diff-tree --no-commit-id --name-only -r HEAD | sort | wc -l | tr -d ' ')" = "12"
           test "$(find .github/workflows -maxdepth 1 -type f -exec basename {} \; | sort)" = "build.yml"
       - name: Install build tools
         run: |
@@ -75,7 +76,7 @@ jobs:
         run: |
           set -euo pipefail
           changed="$(git diff-tree --no-commit-id --name-only -r HEAD | sort)"
-          expected="$(printf '%s\n' App/ATMViewControllers.m Core/ATMBackupManager.m Core/ATMCore.h Core/ATMCore.m Extension/Resources/Info.plist README.md Resources/Info.plist THIRD_PARTY.md Tests/verify.py Tests/verify_package.sh control | sort)"
+          expected="$(printf '%s\n' App/ATMViewControllers.m Core/ATMBackupManager.m Core/ATMCore.h Core/ATMCore.m Core/ATMRestorePlanner.m Extension/Resources/Info.plist README.md Resources/Info.plist THIRD_PARTY.md Tests/verify.py Tests/verify_package.sh control | sort)"
           test "$changed" = "$expected"
           if rg -n -i '(BEGIN (RSA|OPENSSH|EC|PGP) PRIVATE KEY|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_|AKIA[0-9A-Z]{16}|xox[baprs]-|/workspace/|AAZ_PROJECT_MASTER_CONTEXT|YT Music Importer|calculatorConverter)' $changed; then exit 1; fi
           links="$(rg -o 'https://x\.com/[A-Za-z0-9_]+' $changed | sed 's/^[^:]*://' | sort -u || true)"
@@ -155,6 +156,8 @@ jobs:
           if gh api "repos/${repo}/git/ref/tags/${PREVIOUS_TAG}" >/dev/null 2>&1; then exit 1; fi
           gh api -X DELETE "repos/${repo}/actions/runs/${PREVIOUS_ACTION_ID_1}"
           gh api -X DELETE "repos/${repo}/actions/runs/${PREVIOUS_ACTION_ID_2}"
+          gh api -X DELETE "repos/${repo}/actions/runs/${PREVIOUS_ACTION_ID_3}"
+          if gh api "repos/${repo}/actions/runs/${PREVIOUS_ACTION_ID_3}" >/dev/null 2>&1; then exit 1; fi
           if gh api "repos/${repo}/actions/runs/${PREVIOUS_ACTION_ID_1}" >/dev/null 2>&1; then exit 1; fi
           if gh api "repos/${repo}/actions/runs/${PREVIOUS_ACTION_ID_2}" >/dev/null 2>&1; then exit 1; fi
           git push origin --delete beta39-build
