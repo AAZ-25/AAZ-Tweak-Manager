@@ -73,11 +73,30 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
     [controller presentViewController:alert animated:YES completion:nil];
 }
 
+static NSArray<NSString *> *ATMBackupCaptureStageKeys(void) {
+    NSMutableArray<NSString *> *keys = [@[@"preflight", @"preflight-warning", @"preflight-workspace", @"preflight-tools", @"preflight-persona", @"preflight-staging", @"preflight-direct-copy-tools", @"preflight-direct-copy", @"preflight-direct-directory-containment", @"preflight-direct-directory-create", @"preflight-fallback-staging", @"preflight-fallback-create", @"preflight-fallback-extract", @"preflight-fallback-verify", @"preflight-control", @"preflight-build", @"preflight-identity", @"preflight-reopen-directory", @"preflight-reopen", @"preflight-payload-verify", @"preflight-archive", @"preflight-archive-verify", @"preflight-share-inbox", @"preflight-import", @"preflight-unknown", @"inventory", @"payload", @"privacy", @"verification", @"tools", @"workspace", @"staging", @"directory-containment", @"directory-create", @"directory-staging", @"archive", @"archive-create", @"archive-extract", @"direct-copy-tools", @"direct-copy", @"direct-copy-verify", @"archive-fallback-create", @"archive-fallback-extract", @"archive-fallback-verify", @"control", @"build", @"identity", @"package-reopen-directory", @"package-reopen", @"package-payload-verify", @"cancelled", @"unknown"] mutableCopy];
+    NSArray<NSString *> *verificationPrefixes = @[@"preflight-direct-copy-verify", @"preflight-fallback-verify", @"preflight-payload-verify", @"direct-copy-verify", @"archive-fallback-verify", @"package-payload-verify"];
+    NSArray<NSString *> *verificationReasons = @[@"enumeration", @"unexpected-directory", @"unexpected-entry", @"missing-entry", @"source", @"type", @"mode", @"size", @"content", @"symlink", @"unknown"];
+    for (NSString *prefix in verificationPrefixes) for (NSString *reason in verificationReasons) [keys addObject:[NSString stringWithFormat:@"%@-%@", prefix, reason]];
+    return keys;
+}
+
+static NSUInteger ATMFailureCountForPrefixes(NSDictionary<NSString *, NSNumber *> *failures, NSArray<NSString *> *prefixes) {
+    __block NSUInteger total = 0;
+    [failures enumerateKeysAndObjectsUsingBlock:^(NSString *key, NSNumber *count, BOOL *stop) {
+        (void)stop;
+        for (NSString *prefix in prefixes) {
+            if ([key hasPrefix:[prefix stringByAppendingString:@"-"]]) { total += count.unsignedIntegerValue; break; }
+        }
+    }];
+    return total;
+}
+
 static NSURL *ATMWriteBackupSummaryReport(NSDictionary *report, NSError **error) {
     NSDictionary *info = NSBundle.mainBundle.infoDictionary;
     NSDictionary *manifest = [report[@"manifest"] isKindOfClass:NSDictionary.class] ? report[@"manifest"] : @{};
     NSDictionary *failures = [report[@"captureFailureCounts"] isKindOfClass:NSDictionary.class] ? report[@"captureFailureCounts"] : @{};
-    NSArray<NSString *> *stageKeys = @[@"preflight", @"preflight-workspace", @"preflight-tools", @"preflight-persona", @"preflight-staging", @"preflight-fallback-staging", @"preflight-fallback-create", @"preflight-fallback-extract", @"preflight-fallback-verify", @"preflight-control", @"preflight-build", @"preflight-identity", @"preflight-reopen-directory", @"preflight-reopen", @"preflight-payload-verify", @"preflight-archive", @"preflight-archive-verify", @"preflight-share-inbox", @"preflight-import", @"preflight-unknown", @"inventory", @"payload", @"privacy", @"verification", @"tools", @"workspace", @"staging", @"directory-containment", @"directory-create", @"directory-staging", @"archive", @"archive-create", @"archive-extract", @"direct-copy-tools", @"direct-copy", @"direct-copy-verify", @"archive-fallback-create", @"archive-fallback-extract", @"archive-fallback-verify", @"control", @"build", @"identity", @"package-reopen-directory", @"package-reopen", @"package-payload-verify", @"cancelled", @"unknown"];
+    NSArray<NSString *> *stageKeys = ATMBackupCaptureStageKeys();
     NSMutableString *text = [NSMutableString stringWithFormat:
         @"AAZ Tweak Manager Backup Report\nformat=1\nappVersion=%@\nappBuild=%@\nhealth=%@\nportable=%@\npackages=%@\nsources=%@\nrestorableSources=%@\nembeddedDEBs=%@\nsafelyRepacked=%@\nportableCoverage=%@\npayloadUnavailable=%@\nbadHashes=%@\npackageHashFailures=%@\nsourceHashFailures=%@\nunreadableEntries=%@\n",
         info[@"CFBundleShortVersionString"] ?: @"unknown", info[@"CFBundleVersion"] ?: @"unknown",
@@ -359,11 +378,13 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
             BOOL portable = [manifest[@"portable"] boolValue] && embeddedCount == packages.count; NSUInteger coverage = [manifest[@"payloadCoverage"] unsignedIntegerValue];
             NSString *coverageMessage = portable ? @"Full offline Restore is available." : [NSString stringWithFormat:@"Inventory and sources were saved. %lu package payload%@ could not be captured, so full offline Restore stays blocked until a complete backup is created.", (unsigned long)(packages.count - embeddedCount), packages.count - embeddedCount == 1 ? @"" : @"s"];
             NSString *successMessage = [NSString stringWithFormat:@"%lu packages including dependencies • %lu sources • %lu embedded DEBs (%lu safely repacked)\n%lu%% portable coverage • %@ • Atomic write verified\n\n%@\nCredentials and user-data paths are never included.", (unsigned long)packages.count, (unsigned long)sources.count, (unsigned long)embeddedCount, (unsigned long)repackedCount, (unsigned long)coverage, password.length ? @"Encrypted" : @"Standard", coverageMessage];
+            NSDictionary *attemptFailures = [attemptReport[@"captureFailureCounts"] isKindOfClass:NSDictionary.class] ? attemptReport[@"captureFailureCounts"] : @{};
+            BOOL hasAttemptWarnings = [[attemptFailures.allValues filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSNumber *count, NSDictionary *bindings) { (void)bindings; return count.unsignedIntegerValue > 0; }]] count] > 0;
             [NSNotificationCenter.defaultCenter postNotificationName:ATMDataChangedNotification object:nil];
             UIAlertController *alert = [UIAlertController alertControllerWithTitle:portable ? @"Portable Backup Created" : @"Backup Created: Limited Restore" message:successMessage preferredStyle:UIAlertControllerStyleAlert];
             [alert addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleCancel handler:nil]];
             [alert addAction:[UIAlertAction actionWithTitle:@"Share" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) { [self shareURL:url sourceView:self.navigationController.navigationBar]; }]];
-            if (!portable && attemptReport) [alert addAction:[UIAlertAction actionWithTitle:@"Share Privacy-Safe Report" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) { NSError *reportError = nil; NSURL *reportURL = ATMWriteBackupSummaryReport(attemptReport, &reportError); if (reportURL) [self shareURL:reportURL sourceView:self.navigationController.navigationBar]; else ATMShowError(self, @"Report unavailable", reportError); }]];
+            if ((!portable || hasAttemptWarnings) && attemptReport) [alert addAction:[UIAlertAction actionWithTitle:@"Share Privacy-Safe Report" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) { NSError *reportError = nil; NSURL *reportURL = ATMWriteBackupSummaryReport(attemptReport, &reportError); if (reportURL) [self shareURL:reportURL sourceView:self.navigationController.navigationBar]; else ATMShowError(self, @"Report unavailable", reportError); }]];
             [self presentViewController:alert animated:YES completion:nil];
             };
             if (progress.presentingViewController) [progress dismissViewControllerAnimated:YES completion:finishUI]; else finishUI();
@@ -498,16 +519,19 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
                 @{ @"title": @"Payload Unavailable", @"value": [@(unavailable) description], @"symbol": @"questionmark.circle" }
             ] }
         ] mutableCopy];
-        if (![[report[@"health"] description] isEqualToString:@"Healthy"]) {
-            NSDictionary *failures = [report[@"captureFailureCounts"] isKindOfClass:NSDictionary.class] ? report[@"captureFailureCounts"] : @{};
+        NSDictionary *failures = [report[@"captureFailureCounts"] isKindOfClass:NSDictionary.class] ? report[@"captureFailureCounts"] : @{};
+        BOOL hasCaptureWarnings = [[failures.allValues filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSNumber *count, NSDictionary *bindings) { (void)bindings; return count.unsignedIntegerValue > 0; }]] count] > 0;
+        if (![[report[@"health"] description] isEqualToString:@"Healthy"] || hasCaptureWarnings) {
             NSUInteger inventoryFailures = [failures[@"inventory"] unsignedIntegerValue] + [failures[@"payload"] unsignedIntegerValue];
             NSUInteger safetyFailures = [failures[@"privacy"] unsignedIntegerValue] + [failures[@"verification"] unsignedIntegerValue];
-            NSUInteger toolFailures = [failures[@"preflight"] unsignedIntegerValue] + [failures[@"tools"] unsignedIntegerValue] + [failures[@"workspace"] unsignedIntegerValue] + [failures[@"staging"] unsignedIntegerValue] + [failures[@"directory-containment"] unsignedIntegerValue] + [failures[@"directory-create"] unsignedIntegerValue] + [failures[@"directory-staging"] unsignedIntegerValue] + [failures[@"archive"] unsignedIntegerValue] + [failures[@"archive-create"] unsignedIntegerValue] + [failures[@"archive-extract"] unsignedIntegerValue] + [failures[@"direct-copy-tools"] unsignedIntegerValue] + [failures[@"direct-copy"] unsignedIntegerValue] + [failures[@"direct-copy-verify"] unsignedIntegerValue] + [failures[@"archive-fallback-create"] unsignedIntegerValue] + [failures[@"archive-fallback-extract"] unsignedIntegerValue] + [failures[@"archive-fallback-verify"] unsignedIntegerValue];
+            NSUInteger toolFailures = [failures[@"preflight"] unsignedIntegerValue] + [failures[@"preflight-warning"] unsignedIntegerValue] + [failures[@"tools"] unsignedIntegerValue] + [failures[@"workspace"] unsignedIntegerValue] + [failures[@"staging"] unsignedIntegerValue] + [failures[@"directory-containment"] unsignedIntegerValue] + [failures[@"directory-create"] unsignedIntegerValue] + [failures[@"directory-staging"] unsignedIntegerValue] + [failures[@"archive"] unsignedIntegerValue] + [failures[@"archive-create"] unsignedIntegerValue] + [failures[@"archive-extract"] unsignedIntegerValue] + [failures[@"direct-copy-tools"] unsignedIntegerValue] + [failures[@"direct-copy"] unsignedIntegerValue] + [failures[@"direct-copy-verify"] unsignedIntegerValue] + [failures[@"archive-fallback-create"] unsignedIntegerValue] + [failures[@"archive-fallback-extract"] unsignedIntegerValue] + [failures[@"archive-fallback-verify"] unsignedIntegerValue];
             NSUInteger packageFailures = [failures[@"control"] unsignedIntegerValue] + [failures[@"build"] unsignedIntegerValue] + [failures[@"identity"] unsignedIntegerValue] + [failures[@"package-reopen-directory"] unsignedIntegerValue] + [failures[@"package-reopen"] unsignedIntegerValue] + [failures[@"package-payload-verify"] unsignedIntegerValue] + [failures[@"cancelled"] unsignedIntegerValue] + [failures[@"unknown"] unsignedIntegerValue];
+            toolFailures += ATMFailureCountForPrefixes(failures, @[@"direct-copy-verify", @"archive-fallback-verify"]);
+            packageFailures += ATMFailureCountForPrefixes(failures, @[@"package-payload-verify"]);
             [sections addObject:@{ @"title": @"CAPTURE CHECKS (COUNTS ONLY)", @"items": @[
                 @{ @"title": @"Inventory or File Missing", @"value": [@(inventoryFailures) description], @"symbol": @"doc.badge.questionmark" },
                 @{ @"title": @"Privacy or Verification Block", @"value": [@(safetyFailures) description], @"symbol": @"hand.raised" },
-                @{ @"title": @"Tool or Archive Failure", @"value": [@(toolFailures) description], @"symbol": @"wrench.and.screwdriver" },
+                @{ @"title": @"Tool or Archive Failure Events", @"value": [@(toolFailures) description], @"symbol": @"wrench.and.screwdriver" },
                 @{ @"title": @"Package Build Failure", @"value": [@(packageFailures) description], @"symbol": @"shippingbox.and.arrow.backward" }
             ] }];
         }

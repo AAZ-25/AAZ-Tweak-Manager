@@ -27,7 +27,7 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "44"
+assert info["CFBundleVersion"] == "45"
 assert info["LSSupportsOpeningDocumentsInPlace"] is False
 assert "CFBundleDocumentTypes" not in info
 
@@ -47,7 +47,7 @@ assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["Ap
 with (ROOT / "Extension/Resources/Info.plist").open("rb") as handle:
     extension_info = plistlib.load(handle)
 assert extension_info["CFBundleIdentifier"] == "com.aaz.tweakmanager.importer"
-assert extension_info["CFBundleVersion"] == "44"
+assert extension_info["CFBundleVersion"] == "45"
 assert extension_info["CFBundlePackageType"] == "XPC!"
 extension_definition = extension_info["NSExtension"]
 assert extension_definition["NSExtensionPointIdentifier"] == "com.apple.share-services"
@@ -65,7 +65,7 @@ assert extension_entitlements == {
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta44" in control
+assert "Version: 0.1.0~beta45" in control
 assert "Priority: optional" in control
 assert "Depends: firmware (>= 15.0), coreutils, diffutils, dpkg, tar" in control
 
@@ -332,19 +332,39 @@ assert '@"archive-fallback-create"' in all_text
 assert '@"archive-fallback-extract"' in all_text
 assert 'stagePayloadDirectlyFromRoot' in backup_manager_text
 assert '@"direct-copy-verify"' in all_text
-assert 'ATMVerifyStagedPayload' in backup_manager_text
+assert 'ATMStagedPayloadVerificationFailure' in backup_manager_text
 assert '@"package-reopen"' in all_text
 assert '@"package-payload-verify"' in all_text
 assert 'runBackupPreflight' in all_text
 assert 'newBackupWorkingRootNamed' in backup_manager_text
 assert '@"preflight-workspace"' in all_text
 assert '@"preflight-reopen-directory"' in all_text
-assert 'failureCounts[preflightStage] = @1' in backup_manager_text
+assert 'preflightFailureCounts[preflightStage] = @1' in backup_manager_text
+assert 'Safe check warning; continuing backup' in backup_manager_text
+assert 'combinedFailureCounts = [preflightFailureCounts mutableCopy]' in backup_manager_text
+assert '[packageCaptureFailureCounts enumerateKeysAndObjectsUsingBlock:' in backup_manager_text
+assert 'ATMStagedPayloadVerificationFailure' in backup_manager_text
+assert 'ATMVerificationStage' in backup_manager_text
+assert 'if (S_ISREG(sourceInfo.st_mode)) {' in backup_manager_text
+assert 'if ((sourceInfo.st_mode & 07777) != (stagedInfo.st_mode & 07777)) return @"mode";' in backup_manager_text
+assert 'return @"symlink";' in backup_manager_text
+assert '@[@"enumeration", @"unexpected-directory", @"unexpected-entry", @"missing-entry", @"source", @"type", @"mode", @"size", @"content", @"symlink"]' in backup_manager_text
+assert 'verificationPrefixes = @[@"preflight-direct-copy-verify", @"preflight-fallback-verify", @"preflight-payload-verify", @"direct-copy-verify", @"archive-fallback-verify", @"package-payload-verify"]' in all_text
+assert '@"preflight-warning"' in all_text
+assert '@"stages": observedStages' in backup_manager_text
+assert 'preflight-direct-' in backup_manager_text
+assert 'observedFailureStages:(NSArray<NSString *> **)observedFailureStages' in backup_manager_text
+assert 'for (NSString *observedStage in observedFailureStages)' in backup_manager_text
 assert 'ATMFilesEqualWithOptionalPrivilegedTool' in backup_manager_text
 assert 'ATMRunBackupToolWithPrivilege(dpkgDeb, @[@"--version"], YES, nil)' in backup_manager_text
 assert '@"/usr/bin/true"' not in backup_manager_text
 assert 'cancelCurrentBackup' in all_text
 assert 'Share Privacy-Safe Report' in all_text
+assert 'hasAttemptWarnings' in all_text
+assert '(!portable || hasAttemptWarnings)' in all_text
+assert 'hasCaptureWarnings' in all_text
+assert 'ATMFailureCountForPrefixes' in all_text
+assert 'Tool or Archive Failure Events' in all_text
 assert 'ATMCreateDirectoryTreeBelowRoot' in backup_manager_text
 assert 'mkdirat(directoryFD, name, 0755)' in backup_manager_text
 assert 'openat(directoryFD, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)' in backup_manager_text
@@ -390,6 +410,19 @@ with tempfile.TemporaryDirectory() as temporary:
     assert (direct_stage / "usr/lib/aaz-preflight/probe").stat().st_mode & 0o777 == 0o755
     assert (direct_stage / "usr/lib/aaz-preflight/probe-link").is_symlink()
     assert os.readlink(direct_stage / "usr/lib/aaz-preflight/probe-link") == "probe"
+
+    fallback_list = temporary_root / "fallback-files"
+    fallback_list.write_text("usr/lib/aaz-preflight/probe\nusr/lib/aaz-preflight/probe-link\n")
+    fallback_archive = temporary_root / "fallback.tar"
+    subprocess.run(["tar", "-cpf", str(fallback_archive), "-C", str(payload_root), "-T", str(fallback_list)], check=True, capture_output=True)
+    fallback_stage = temporary_root / "fallback-stage"
+    fallback_stage.mkdir()
+    subprocess.run(["tar", "-xpf", str(fallback_archive), "-C", str(fallback_stage)], check=True, capture_output=True)
+    assert (fallback_stage / "usr/lib/aaz-preflight/probe").read_bytes() == executable.read_bytes()
+    assert (fallback_stage / "usr/lib/aaz-preflight/probe").stat().st_mode & 0o777 == 0o755
+    assert (fallback_stage / "usr/lib/aaz-preflight/probe-link").is_symlink()
+    assert os.readlink(fallback_stage / "usr/lib/aaz-preflight/probe-link") == "probe"
+    assert not (fallback_stage / "shared/not-listed").exists()
 
     package_stage = temporary_root / "package-stage"
     shutil.copytree(direct_stage, package_stage, symlinks=True)
