@@ -22,7 +22,7 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "38"
+assert info["CFBundleVersion"] == "39"
 assert info["LSSupportsOpeningDocumentsInPlace"] is False
 assert "CFBundleDocumentTypes" not in info
 
@@ -42,7 +42,7 @@ assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["Ap
 with (ROOT / "Extension/Resources/Info.plist").open("rb") as handle:
     extension_info = plistlib.load(handle)
 assert extension_info["CFBundleIdentifier"] == "com.aaz.tweakmanager.importer"
-assert extension_info["CFBundleVersion"] == "38"
+assert extension_info["CFBundleVersion"] == "39"
 assert extension_info["CFBundlePackageType"] == "XPC!"
 extension_definition = extension_info["NSExtension"]
 assert extension_definition["NSExtensionPointIdentifier"] == "com.apple.share-services"
@@ -60,7 +60,7 @@ assert extension_entitlements == {
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta38" in control
+assert "Version: 0.1.0~beta39" in control
 assert "Priority: optional" in control
 
 excluded_directories = {".git", ".theos-build", "packages"}
@@ -98,7 +98,7 @@ assert "Search packages" in all_text
 assert "No matching packages" in all_text
 assert "forPackageIDs" in all_text
 assert "Create Portable Backup?" in all_text
-assert "Incomplete inventory-only backups are not created." in all_text
+assert "No manual DEB sharing is required." in all_text
 assert "Package Vault" in all_text
 assert "100%% portable coverage" in all_text
 assert "Creating…" in all_text
@@ -202,9 +202,9 @@ for required_executor_guard in (
     '@"Acquire::AllowDowngradeToInsecureRepositories=false"',
     '@"APT::Get::Allow-Downgrades=false"',
     '@"DPkg::Lock::Timeout=30"',
-    '"R38-PERSONA"', '"R38-SPAWN"', '"R38-LOCK"', '"R38-PRIVILEGE"',
-    '"R38-STORAGE"', '"R38-DPKG"', '"R38-DPKG-PREFLIGHT"', '"R38-PARTIAL"', '"R38-DEPENDENCY"', '"R38-ARCHIVE"', '"R38-APT-PREFLIGHT"',
-    '"R38-AUTH"', '"R38-SOURCE-AUTH"', '"R38-NETWORK"', '"R38-APT"',
+    '"R39-PERSONA"', '"R39-SPAWN"', '"R39-LOCK"', '"R39-PRIVILEGE"',
+    '"R39-STORAGE"', '"R39-DPKG"', '"R39-DPKG-PREFLIGHT"', '"R39-PARTIAL"', '"R39-DEPENDENCY"', '"R39-ARCHIVE"', '"R39-APT-PREFLIGHT"',
+    '"R39-AUTH"', '"R39-SOURCE-AUTH"', '"R39-NETWORK"', '"R39-APT"',
     '@"The Restore plan changed after confirmation.',
     '@"sourcesChanged": @NO', '@"removalsAllowed": @NO', '@"downgradesAllowed": @NO',
     '@"identitiesIncluded": @NO',
@@ -216,7 +216,7 @@ for required_embedded_guard in (
     'ATMRestoreVerifiedPayload', '@"--field"', 'ATMSHA256ForFile',
     '256ULL * 1024ULL * 1024ULL', '@"source": @"embedded"',
     '@"items": [requestedItems copy]', 'restoreSessionID',
-    '@"R38-READINESS"', '@"R38-READY"', '@"R38-BLOCKED"',
+    '@"R39-READINESS"', '@"R39-READY"', '@"R39-BLOCKED"',
     'prepareRestoreSessionForBackupURL', 'AAZTweakManagerRestore',
     '1024ULL * 1024ULL * 1024ULL', 'restoreReadinessForBackupURL',
 ):
@@ -237,8 +237,8 @@ assert restore_planner_text.count(verified_payload_lookup) == 1
 assert restore_planner_text.index(verified_payload_lookup) < restore_planner_text.index(repository_metadata_lookup)
 assert 'if (verifiedPayload) {' in restore_planner_text
 assert restore_planner_text.index('if (verifiedPayload) {') < restore_planner_text.index(repository_metadata_lookup)
-assert restore_planner_text.index('return @"R38-DPKG"') < restore_planner_text.index('return @"R38-AUTH"')
-assert restore_planner_text.index('return @"R38-ARCHIVE"') < restore_planner_text.index('return @"R38-AUTH"')
+assert restore_planner_text.index('return @"R39-DPKG"') < restore_planner_text.index('return @"R39-AUTH"')
+assert restore_planner_text.index('return @"R39-ARCHIVE"') < restore_planner_text.index('return @"R39-AUTH"')
 for required_local_auth_guard in (
     'BOOL mixedRequestSources = embeddedRequestCount > 0 && repositoryRequestCount > 0',
     'if (mixedRequestSources) { prerequisiteFailures++; blockedCount++; }',
@@ -251,8 +251,8 @@ for required_privileged_preflight in (
     'embeddedOnly ? @"APT::Get::AllowUnauthenticated=true" : @"APT::Get::AllowUnauthenticated=false"',
     'ATMRestoreRunWithPrivilege(aptGet, preflightArguments, YES)',
     'preflightInstallActions == requests.count', 'preflightRemovalActions == 0',
-    'preflightUnexpectedActions == 0', '@"R38-APT-PREFLIGHT"',
-    'if (!embeddedOnly) {', '@"R38-DPKG-PREFLIGHT"', '@"R38-PARTIAL"',
+    'preflightUnexpectedActions == 0', '@"R39-APT-PREFLIGHT"',
+    'if (!embeddedOnly) {', '@"R39-DPKG-PREFLIGHT"', '@"R39-PARTIAL"',
 ):
     assert required_privileged_preflight in restore_planner_text, f"missing privileged preflight guard: {required_privileged_preflight}"
 assert "NSXPCConnection" not in all_text
@@ -293,10 +293,21 @@ for required_portable_guard in (
     '[manifest[@"portable"] boolValue]', '[manifest[@"payloadCoverage"] integerValue] == 100',
     'cached == manifestPackages.count', '@"APT::Get::Allow-Downgrades=false"',
     '@"APT::Get::Allow-Change-Held-Packages=false"', '@"Acquire::Retries=0"',
-    'embeddedCount != chosen.count', 'Portable Backup needs %lu more verified package DEB',
+    'embeddedCount != chosen.count', 'Automatic package capture could not safely reproduce',
 ):
     assert required_portable_guard in backup_manager_text, f"missing portable-backup guard: {required_portable_guard}"
 assert backup_manager_text.index('authenticatedRepositoryMetadataForRecord') < backup_manager_text.index('acquireAuthenticatedRepositoryPackageForRecord')
+for required_automatic_capture_guard in (
+    'packagesIncludingDependenciesForSelected', 'installedPackageCanBeRepackedWithoutPrivateData',
+    'record.provides = fields[@"Provides"]', '[record.provides componentsSeparatedByString:@","]',
+    '@"--listfiles"', '@"--control-list"', '@"--control-show"', '@"md5sums"', '@"--verify"', '@"--no-recursion"', '@"--same-owner"', '@"--build"', '@"verified-repack"',
+    '@"supportingDependency"', '@"/var/mobile"', '@"/Library/Preferences"',
+    'restoreSanitizedSources', '@"R39-SOURCE-RESTORE"', '@"sourcesToRestore"',
+    '@"privateSourcesSkipped"', '@"aaztm-%@.%@"', 'entry[@"restorable"] = @(!source.credentialsRedacted)',
+):
+    assert required_automatic_capture_guard in all_text, f"missing automatic capture guard: {required_automatic_capture_guard}"
+assert "dpkg-repack" not in control
+assert 'currentRestoreCode = [storedRestoreCode hasPrefix:@"R39-"]' in (ROOT / "Core/ATMCore.m").read_text()
 assert 'ATMProtectedPackageIDs() containsObject:packageID.lowercaseString' in backup_manager_text
 assert 'isPendingPackagePayloadURL' in all_text
 assert "filenames, paths, providers, passwords, or archive contents" in all_text
@@ -336,7 +347,7 @@ assert '@"jailbreakPrefix"' not in (ROOT / "Core/ATMBackupManager.m").read_text(
 assert '@"iOSVersion"' not in (ROOT / "Core/ATMBackupManager.m").read_text()
 core_text = (ROOT / "Core/ATMCore.m").read_text()
 diagnostic_body = core_text.split("NSURL *ATMWriteDiagnosticReport", 1)[1].split("@implementation ATMPersonalLedger", 1)[0]
-for private_field in ("record.packageID", "record.name", "record.version", "sourceOrigin", "depends", 'run[@"output"]'):
+for private_field in ("record.packageID", "record.name", "record.version", "sourceOrigin", "depends", "provides", 'run[@"output"]'):
     assert private_field not in diagnostic_body, f"diagnostic exposes {private_field}"
 assert "performsFirstActionWithFullSwipe = NO" in all_text
 assert "workflow_dispatch:" in (ROOT / ".github/workflows/build.yml").read_text()

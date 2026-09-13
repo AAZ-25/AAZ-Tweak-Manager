@@ -279,10 +279,10 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
 - (void)createBackup {
     if (!ATMAppModel.shared.environment.supportedRootless || ATMAppModel.shared.scanError || !ATMAppModel.shared.packages.count) { ATMShowError(self, @"Backup unavailable", ATMAppModel.shared.scanError ?: [NSError errorWithDomain:@"ATM" code:1 userInfo:@{NSLocalizedDescriptionKey: @"No installed package inventory is available. An empty backup will not be created."}]); return; }
     NSSet<NSString *> *selected = ATMAppModel.shared.ledger.selectedPackageIDs;
-    NSUInteger selectedInstalledCount = [[ATMAppModel.shared.packages filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(ATMPackageRecord *record, NSDictionary *bindings) { (void)bindings; return [selected containsObject:record.packageID]; }]] count];
+    NSUInteger selectedInstalledCount = [[ATMAppModel.shared.packages filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(ATMPackageRecord *record, NSDictionary *bindings) { (void)bindings; return record.personalCandidate && [selected containsObject:record.packageID]; }]] count];
     if (!selectedInstalledCount) { ATMShowError(self, @"Nothing selected", [NSError errorWithDomain:@"ATM" code:2 userInfo:@{NSLocalizedDescriptionKey: @"Select at least one installed package before creating a backup."}]); return; }
     NSUInteger sourceCount = ATMAppModel.shared.sources.count;
-    NSString *message = [NSString stringWithFormat:@"%lu selected package%@ and %lu sanitized source%@ will be included. Every package must have an exact verified DEB from the local vault, APT cache, or an authenticated repository. Incomplete inventory-only backups are not created.", (unsigned long)selectedInstalledCount, selectedInstalledCount == 1 ? @"" : @"s", (unsigned long)sourceCount, sourceCount == 1 ? @"" : @"s"];
+    NSString *message = [NSString stringWithFormat:@"%lu selected package%@, required non-system dependencies, and %lu sanitized source%@ will be captured automatically. Original DEBs are preferred; unchanged installed package files are safely repacked when needed. No manual DEB sharing is required.", (unsigned long)selectedInstalledCount, selectedInstalledCount == 1 ? @"" : @"s", (unsigned long)sourceCount, sourceCount == 1 ? @"" : @"s"];
     UIAlertController *confirmation = [UIAlertController alertControllerWithTitle:@"Create Portable Backup?" message:message preferredStyle:UIAlertControllerStyleAlert];
     [confirmation addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
     [confirmation addAction:[UIAlertAction actionWithTitle:@"Portable Backup" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) { [self performBackupWithPassword:nil]; }]];
@@ -319,8 +319,9 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
             NSDictionary *manifest = [ATMAppModel.shared.backupManager manifestForBackup:url password:password error:nil];
             NSArray *packages = [manifest[@"packages"] isKindOfClass:NSArray.class] ? manifest[@"packages"] : @[];
             NSArray *sources = [manifest[@"sources"] isKindOfClass:NSArray.class] ? manifest[@"sources"] : @[];
-            NSUInteger cachedCount = [[packages filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *package, NSDictionary *bindings) { (void)bindings; return [package[@"debStatus"] isEqualToString:@"exact-cache"]; }]] count];
-            NSString *successMessage = [NSString stringWithFormat:@"%lu packages • %lu sources • %lu embedded DEBs\n100%% portable coverage • %@ • Atomic write verified\n\nCredentials are never included.", (unsigned long)packages.count, (unsigned long)sources.count, (unsigned long)cachedCount, password.length ? @"Encrypted" : @"Standard"];
+            NSUInteger embeddedCount = [[packages filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *package, NSDictionary *bindings) { (void)bindings; return [package[@"debStatus"] isEqualToString:@"exact-cache"]; }]] count];
+            NSUInteger repackedCount = [[packages filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *package, NSDictionary *bindings) { (void)bindings; return [package[@"payloadOrigin"] isEqualToString:@"verified-repack"]; }]] count];
+            NSString *successMessage = [NSString stringWithFormat:@"%lu packages including dependencies • %lu sources • %lu embedded DEBs (%lu safely repacked)\n100%% portable coverage • %@ • Atomic write verified\n\nCredentials and user-data paths are never included.", (unsigned long)packages.count, (unsigned long)sources.count, (unsigned long)embeddedCount, (unsigned long)repackedCount, password.length ? @"Encrypted" : @"Standard"];
             [NSNotificationCenter.defaultCenter postNotificationName:ATMDataChangedNotification object:nil];
             UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Backup Created" message:successMessage preferredStyle:UIAlertControllerStyleAlert];
             [alert addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleCancel handler:nil]];
@@ -382,7 +383,9 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
             [self readinessItem:@"Repository Packages" value:self.plan[@"repositoryRequests"] symbol:@"network" color:[self.plan[@"repositoryRequests"] unsignedIntegerValue] ? warning : good],
             [self readinessItem:@"Packages to Install" value:self.plan[@"installActions"] symbol:@"plus.circle.fill" color:neutral],
             [self readinessItem:@"Packages to Configure" value:self.plan[@"configureActions"] symbol:@"gearshape.fill" color:neutral],
-            [self readinessItem:@"Packages to Remove" value:self.plan[@"removalActions"] symbol:@"minus.circle.fill" color:[self.plan[@"removalActions"] unsignedIntegerValue] ? UIColor.systemRedColor : good]
+            [self readinessItem:@"Packages to Remove" value:self.plan[@"removalActions"] symbol:@"minus.circle.fill" color:[self.plan[@"removalActions"] unsignedIntegerValue] ? UIColor.systemRedColor : good],
+            [self readinessItem:@"Sources to Restore" value:self.plan[@"sourcesToRestore"] symbol:@"link.badge.plus" color:neutral],
+            [self readinessItem:@"Private Sources Skipped" value:self.plan[@"privateSourcesSkipped"] symbol:@"lock.shield" color:good]
         ] }
     ];
     UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, self.tableView.bounds.size.width, 170)];
@@ -442,7 +445,9 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
             @{ @"title": @"CONTENTS", @"items": @[
                 @{ @"title": @"Packages", @"value": [report[@"packageCount"] description] ?: @"0", @"symbol": @"shippingbox" },
                 @{ @"title": @"Sources", @"value": [report[@"sourceCount"] description] ?: @"0", @"symbol": @"link" },
-                @{ @"title": @"Cached DEBs", @"value": [NSString stringWithFormat:@"%@ • %@", [report[@"cachedDEBCount"] description] ?: @"0", cachedSize], @"symbol": @"archivebox" }
+                @{ @"title": @"Embedded DEBs", @"value": [NSString stringWithFormat:@"%@ • %@", [report[@"cachedDEBCount"] description] ?: @"0", cachedSize], @"symbol": @"archivebox" },
+                @{ @"title": @"Safely Repacked", @"value": [report[@"repackedDEBCount"] description] ?: @"0", @"symbol": @"arrow.triangle.2.circlepath" },
+                @{ @"title": @"Restorable Sources", @"value": [report[@"restorableSourceCount"] description] ?: @"0", @"symbol": @"link.badge.plus" }
             ] },
             @{ @"title": @"ON THIS DEVICE", @"items": @[
                 @{ @"title": @"Already Installed", @"value": [@(ready) description], @"symbol": @"checkmark.circle" },
@@ -464,7 +469,7 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
     UIImageView *icon = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:healthy ? @"checkmark.shield.fill" : @"exclamationmark.triangle.fill"]];
     icon.tintColor = healthy ? UIColor.systemGreenColor : UIColor.systemOrangeColor; icon.translatesAutoresizingMaskIntoConstraints = NO;
     UILabel *title = [UILabel new]; title.text = healthy ? @"Portable Backup Verified" : @"Backup Not Portable"; title.font = [UIFont preferredFontForTextStyle:UIFontTextStyleTitle2]; title.adjustsFontForContentSizeCategory = YES; title.textAlignment = NSTextAlignmentCenter; title.translatesAutoresizingMaskIntoConstraints = NO;
-    UILabel *detail = [UILabel new]; detail.text = healthy ? @"Integrity passed with an exact verified DEB for every package." : @"This backup does not contain verified DEBs for every package. Create a new Portable Backup."; detail.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline]; detail.adjustsFontForContentSizeCategory = YES; detail.textColor = UIColor.secondaryLabelColor; detail.textAlignment = NSTextAlignmentCenter; detail.numberOfLines = 2; detail.translatesAutoresizingMaskIntoConstraints = NO;
+    UILabel *detail = [UILabel new]; detail.text = healthy ? @"Integrity passed with a verified original or safely repacked DEB for every package." : @"This backup does not contain a verified payload for every package. Create a new Portable Backup."; detail.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline]; detail.adjustsFontForContentSizeCategory = YES; detail.textColor = UIColor.secondaryLabelColor; detail.textAlignment = NSTextAlignmentCenter; detail.numberOfLines = 2; detail.translatesAutoresizingMaskIntoConstraints = NO;
     [header addSubview:icon]; [header addSubview:title]; [header addSubview:detail];
     [NSLayoutConstraint activateConstraints:@[[icon.topAnchor constraintEqualToAnchor:header.topAnchor constant:12], [icon.centerXAnchor constraintEqualToAnchor:header.centerXAnchor], [icon.widthAnchor constraintEqualToConstant:42], [icon.heightAnchor constraintEqualToConstant:42], [title.topAnchor constraintEqualToAnchor:icon.bottomAnchor constant:8], [title.leadingAnchor constraintEqualToAnchor:header.leadingAnchor constant:20], [title.trailingAnchor constraintEqualToAnchor:header.trailingAnchor constant:-20], [detail.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:4], [detail.leadingAnchor constraintEqualToAnchor:header.leadingAnchor constant:28], [detail.trailingAnchor constraintEqualToAnchor:header.trailingAnchor constant:-28]]];
     self.tableView.tableHeaderView = header;
@@ -590,12 +595,12 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
 - (void)confirmRestoreManifest:(NSDictionary *)manifest plan:(NSDictionary *)plan {
     if (![plan[@"safeToExecute"] boolValue]) return;
     NSString *mode = [plan[@"embeddedRequests"] unsignedIntegerValue] == [plan[@"executionRequests"] count] ? @"verified DEBs embedded in this backup" : @"authenticated repositories";
-    NSString *message = [NSString stringWithFormat:@"Install %@ approved package action(s) using %@?\n\nThe plan will be rechecked immediately. Restore will stop on any drift, removal, downgrade, hold, protected package, unavailable exact package, unexpected dependency action, or insecure repository. Sources will not be changed.", [plan[@"executionRequests"] count] ? @([plan[@"executionRequests"] count]) : @0, mode];
+    NSString *message = [NSString stringWithFormat:@"Install %@ approved package action(s) using %@, then restore %@ sanitized public source file(s)?\n\nThe plan will be rechecked immediately. Restore stops on drift, removal, downgrade, holds, protected packages, unexpected dependencies, or unsafe source data. Private repository credentials are never restored.", [plan[@"executionRequests"] count] ? @([plan[@"executionRequests"] count]) : @0, mode, plan[@"sourcesToRestore"] ?: @0];
     UIAlertController *confirmation = [UIAlertController alertControllerWithTitle:@"Final Restore Confirmation" message:message preferredStyle:UIAlertControllerStyleAlert];
     [confirmation addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(__unused UIAlertAction *action) { [ATMAppModel.shared.backupManager discardRestoreSession]; }]];
     __weak typeof(self) weakSelf = self;
     [confirmation addAction:[UIAlertAction actionWithTitle:@"Restore Now" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *action) {
-        UIAlertController *progress = [UIAlertController alertControllerWithTitle:@"Restoring Packages" message:@"Rechecking the approved plan, then installing without removals, downgrades, or source changes…" preferredStyle:UIAlertControllerStyleAlert];
+        UIAlertController *progress = [UIAlertController alertControllerWithTitle:@"Restoring Backup" message:@"Rechecking the approved plan, installing packages without removals or downgrades, then restoring sanitized public sources…" preferredStyle:UIAlertControllerStyleAlert];
         [weakSelf presentViewController:progress animated:YES completion:nil];
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
             NSError *error = nil;
@@ -604,7 +609,7 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
                 [progress dismissViewControllerAnimated:YES completion:^{
                     if (!result) { ATMShowError(weakSelf, @"Restore did not start", error); return; }
                     BOOL success = [result[@"success"] boolValue];
-                    NSString *detail = [NSString stringWithFormat:@"%@\n\nRestore code: %@\nPackage-manager exit: %@\nRequested: %@\nCompleted: %@\nRemaining: %@\nFinal verification: %@\nPackages removed: 0\nSources changed: No", result[@"reason"] ?: @"Restore stopped.", result[@"restoreCode"] ?: @"R38-UNKNOWN", result[@"aptExitCode"] ?: @(-1), result[@"requested"] ?: @0, result[@"completed"] ?: @0, result[@"remaining"] ?: @0, [result[@"postCheckPassed"] boolValue] ? @"Passed" : @"Not passed"];
+                    NSString *detail = [NSString stringWithFormat:@"%@\n\nRestore code: %@\nPackage-manager exit: %@\nRequested: %@\nCompleted: %@\nRemaining: %@\nFinal verification: %@\nPackages removed: 0\nSources restored: %@\nPrivate sources skipped: %@", result[@"reason"] ?: @"Restore stopped.", result[@"restoreCode"] ?: @"R39-UNKNOWN", result[@"aptExitCode"] ?: @(-1), result[@"requested"] ?: @0, result[@"completed"] ?: @0, result[@"remaining"] ?: @0, [result[@"postCheckPassed"] boolValue] ? @"Passed" : @"Not passed", result[@"sourcesRestored"] ?: @0, result[@"privateSourcesSkipped"] ?: plan[@"privateSourcesSkipped"] ?: @0];
                     UIAlertController *summary = [UIAlertController alertControllerWithTitle:success ? @"Restore Completed" : @"Restore Needs Attention" message:detail preferredStyle:UIAlertControllerStyleAlert];
                     [summary addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleDefault handler:nil]];
                     [weakSelf presentViewController:summary animated:YES completion:nil];
@@ -803,7 +808,7 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
     else if ([event isEqualToString:@"profile-renamed"]) { title = @"Selection Profile Renamed"; summary = @"The saved package selection was preserved"; symbol = @"pencil.circle.fill"; }
     else if ([event isEqualToString:@"profile-duplicated"]) { title = @"Selection Profile Duplicated"; summary = [NSString stringWithFormat:@"%@ packages copied to a new profile", details[@"count"] ?: @0]; symbol = @"plus.square.on.square"; }
     else if ([event isEqualToString:@"restore-completed"]) { title = @"Restore Completed"; summary = [NSString stringWithFormat:@"%@ package actions completed • final check passed", details[@"completed"] ?: @0]; symbol = @"checkmark.shield.fill"; }
-    else if ([event isEqualToString:@"restore-stopped"]) { title = @"Restore Stopped"; summary = [NSString stringWithFormat:@"%@ completed • %@ remaining • %@", details[@"completed"] ?: @0, details[@"remaining"] ?: @0, details[@"restoreCode"] ?: @"R38-UNKNOWN"]; symbol = @"exclamationmark.shield.fill"; }
+    else if ([event isEqualToString:@"restore-stopped"]) { title = @"Restore Stopped"; summary = [NSString stringWithFormat:@"%@ completed • %@ remaining • %@", details[@"completed"] ?: @0, details[@"remaining"] ?: @0, details[@"restoreCode"] ?: @"R39-UNKNOWN"]; symbol = @"exclamationmark.shield.fill"; }
     NSDate *date = ATMDateFromISO(item[@"timestamp"]);
     static NSDateFormatter *timeFormatter; static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{ timeFormatter = [NSDateFormatter new]; timeFormatter.dateStyle = NSDateFormatterNoStyle; timeFormatter.timeStyle = NSDateFormatterShortStyle; });
