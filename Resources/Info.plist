@@ -17,7 +17,7 @@
     <key>CFBundleShortVersionString</key>
     <string>0.1.0</string>
     <key>CFBundleVersion</key>
-	<string>42</string>
+	<string>43</string>
     <key>UTExportedTypeDeclarations</key>
     <array>
         <dict>
@@ -69,4 +69,3 @@
     </array>
 </dict>
 </plist>
-

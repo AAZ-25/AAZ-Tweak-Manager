@@ -77,7 +77,7 @@ static NSURL *ATMWriteBackupSummaryReport(NSDictionary *report, NSError **error)
     NSDictionary *info = NSBundle.mainBundle.infoDictionary;
     NSDictionary *manifest = [report[@"manifest"] isKindOfClass:NSDictionary.class] ? report[@"manifest"] : @{};
     NSDictionary *failures = [report[@"captureFailureCounts"] isKindOfClass:NSDictionary.class] ? report[@"captureFailureCounts"] : @{};
-    NSArray<NSString *> *stageKeys = @[@"inventory", @"payload", @"privacy", @"verification", @"tools", @"staging", @"directory-containment", @"directory-create", @"directory-staging", @"archive", @"archive-create", @"archive-extract", @"control", @"build", @"identity", @"unknown"];
+    NSArray<NSString *> *stageKeys = @[@"preflight", @"inventory", @"payload", @"privacy", @"verification", @"tools", @"staging", @"directory-containment", @"directory-create", @"directory-staging", @"archive", @"archive-create", @"archive-extract", @"direct-copy-tools", @"direct-copy", @"direct-copy-verify", @"archive-fallback-create", @"archive-fallback-extract", @"archive-fallback-verify", @"control", @"build", @"identity", @"package-reopen", @"package-payload-verify", @"cancelled", @"unknown"];
     NSMutableString *text = [NSMutableString stringWithFormat:
         @"AAZ Tweak Manager Backup Report\nformat=1\nappVersion=%@\nappBuild=%@\nhealth=%@\nportable=%@\npackages=%@\nsources=%@\nrestorableSources=%@\nembeddedDEBs=%@\nsafelyRepacked=%@\nportableCoverage=%@\npayloadUnavailable=%@\nbadHashes=%@\npackageHashFailures=%@\nsourceHashFailures=%@\nunreadableEntries=%@\n",
         info[@"CFBundleShortVersionString"] ?: @"unknown", info[@"CFBundleVersion"] ?: @"unknown",
@@ -326,15 +326,31 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
     self.navigationItem.rightBarButtonItem.enabled = NO;
     self.selectionButton.enabled = NO;
     self.packageSearchController.searchBar.userInteractionEnabled = NO;
+    UIAlertController *progress = [UIAlertController alertControllerWithTitle:@"Safe System Check" message:@"Running a synthetic end-to-end check before package data is touched…" preferredStyle:UIAlertControllerStyleAlert];
+    [progress addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(__unused UIAlertAction *action) { [ATMAppModel.shared.backupManager cancelCurrentBackup]; }]];
+    [self presentViewController:progress animated:YES completion:nil];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         NSError *error = nil;
-        NSURL *url = [ATMAppModel.shared.backupManager createBackupWithPackages:ATMAppModel.shared.packages sources:ATMAppModel.shared.sources profileName:[self matchingProfileName] password:password error:&error];
+        NSURL *url = [ATMAppModel.shared.backupManager createBackupWithPackages:ATMAppModel.shared.packages sources:ATMAppModel.shared.sources profileName:[self matchingProfileName] password:password progressHandler:^(NSString *stage, NSUInteger completed, NSUInteger total) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                progress.title = stage;
+                progress.message = total ? [NSString stringWithFormat:@"%lu of %lu complete. You can cancel safely; temporary data will be removed.", (unsigned long)completed, (unsigned long)total] : @"Working…";
+            });
+        } error:&error];
         dispatch_async(dispatch_get_main_queue(), ^{
-            backupButton.title = @"Backup";
-            backupButton.enabled = YES;
-            self.selectionButton.enabled = YES;
-            self.packageSearchController.searchBar.userInteractionEnabled = YES;
-            if (!url) { ATMShowError(self, @"Backup failed", error); return; }
+            void (^finishUI)(void) = ^{
+                backupButton.title = @"Backup";
+                backupButton.enabled = YES;
+                self.selectionButton.enabled = YES;
+                self.packageSearchController.searchBar.userInteractionEnabled = YES;
+                NSDictionary *attemptReport = ATMAppModel.shared.backupManager.lastBackupAttemptReport;
+                if (!url) {
+                    UIAlertController *failed = [UIAlertController alertControllerWithTitle:error.code == 90 ? @"Backup Cancelled" : @"Backup Failed" message:error.localizedDescription ?: @"The operation did not complete." preferredStyle:UIAlertControllerStyleAlert];
+                    [failed addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleCancel handler:nil]];
+                    if (attemptReport) [failed addAction:[UIAlertAction actionWithTitle:@"Share Privacy-Safe Report" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) { NSError *reportError = nil; NSURL *reportURL = ATMWriteBackupSummaryReport(attemptReport, &reportError); if (reportURL) [self shareURL:reportURL sourceView:self.navigationController.navigationBar]; else ATMShowError(self, @"Report unavailable", reportError); }]];
+                    [self presentViewController:failed animated:YES completion:nil];
+                    return;
+                }
             NSDictionary *manifest = [ATMAppModel.shared.backupManager manifestForBackup:url password:password error:nil];
             NSArray *packages = [manifest[@"packages"] isKindOfClass:NSArray.class] ? manifest[@"packages"] : @[];
             NSArray *sources = [manifest[@"sources"] isKindOfClass:NSArray.class] ? manifest[@"sources"] : @[];
@@ -347,7 +363,10 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
             UIAlertController *alert = [UIAlertController alertControllerWithTitle:portable ? @"Portable Backup Created" : @"Backup Created: Limited Restore" message:successMessage preferredStyle:UIAlertControllerStyleAlert];
             [alert addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleCancel handler:nil]];
             [alert addAction:[UIAlertAction actionWithTitle:@"Share" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) { [self shareURL:url sourceView:self.navigationController.navigationBar]; }]];
+            if (!portable && attemptReport) [alert addAction:[UIAlertAction actionWithTitle:@"Share Privacy-Safe Report" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) { NSError *reportError = nil; NSURL *reportURL = ATMWriteBackupSummaryReport(attemptReport, &reportError); if (reportURL) [self shareURL:reportURL sourceView:self.navigationController.navigationBar]; else ATMShowError(self, @"Report unavailable", reportError); }]];
             [self presentViewController:alert animated:YES completion:nil];
+            };
+            if (progress.presentingViewController) [progress dismissViewControllerAnimated:YES completion:finishUI]; else finishUI();
         });
     });
 }
@@ -483,8 +502,8 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
             NSDictionary *failures = [report[@"captureFailureCounts"] isKindOfClass:NSDictionary.class] ? report[@"captureFailureCounts"] : @{};
             NSUInteger inventoryFailures = [failures[@"inventory"] unsignedIntegerValue] + [failures[@"payload"] unsignedIntegerValue];
             NSUInteger safetyFailures = [failures[@"privacy"] unsignedIntegerValue] + [failures[@"verification"] unsignedIntegerValue];
-            NSUInteger toolFailures = [failures[@"tools"] unsignedIntegerValue] + [failures[@"staging"] unsignedIntegerValue] + [failures[@"directory-containment"] unsignedIntegerValue] + [failures[@"directory-create"] unsignedIntegerValue] + [failures[@"directory-staging"] unsignedIntegerValue] + [failures[@"archive"] unsignedIntegerValue] + [failures[@"archive-create"] unsignedIntegerValue] + [failures[@"archive-extract"] unsignedIntegerValue];
-            NSUInteger packageFailures = [failures[@"control"] unsignedIntegerValue] + [failures[@"build"] unsignedIntegerValue] + [failures[@"identity"] unsignedIntegerValue] + [failures[@"unknown"] unsignedIntegerValue];
+            NSUInteger toolFailures = [failures[@"preflight"] unsignedIntegerValue] + [failures[@"tools"] unsignedIntegerValue] + [failures[@"staging"] unsignedIntegerValue] + [failures[@"directory-containment"] unsignedIntegerValue] + [failures[@"directory-create"] unsignedIntegerValue] + [failures[@"directory-staging"] unsignedIntegerValue] + [failures[@"archive"] unsignedIntegerValue] + [failures[@"archive-create"] unsignedIntegerValue] + [failures[@"archive-extract"] unsignedIntegerValue] + [failures[@"direct-copy-tools"] unsignedIntegerValue] + [failures[@"direct-copy"] unsignedIntegerValue] + [failures[@"direct-copy-verify"] unsignedIntegerValue] + [failures[@"archive-fallback-create"] unsignedIntegerValue] + [failures[@"archive-fallback-extract"] unsignedIntegerValue] + [failures[@"archive-fallback-verify"] unsignedIntegerValue];
+            NSUInteger packageFailures = [failures[@"control"] unsignedIntegerValue] + [failures[@"build"] unsignedIntegerValue] + [failures[@"identity"] unsignedIntegerValue] + [failures[@"package-reopen"] unsignedIntegerValue] + [failures[@"package-payload-verify"] unsignedIntegerValue] + [failures[@"cancelled"] unsignedIntegerValue] + [failures[@"unknown"] unsignedIntegerValue];
             [sections addObject:@{ @"title": @"CAPTURE CHECKS (COUNTS ONLY)", @"items": @[
                 @{ @"title": @"Inventory or File Missing", @"value": [@(inventoryFailures) description], @"symbol": @"doc.badge.questionmark" },
                 @{ @"title": @"Privacy or Verification Block", @"value": [@(safetyFailures) description], @"symbol": @"hand.raised" },

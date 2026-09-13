@@ -2,6 +2,8 @@
 from pathlib import Path
 import plistlib
 import re
+import os
+import shutil
 import subprocess
 import tarfile
 import tempfile
@@ -25,7 +27,7 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "42"
+assert info["CFBundleVersion"] == "43"
 assert info["LSSupportsOpeningDocumentsInPlace"] is False
 assert "CFBundleDocumentTypes" not in info
 
@@ -45,7 +47,7 @@ assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["Ap
 with (ROOT / "Extension/Resources/Info.plist").open("rb") as handle:
     extension_info = plistlib.load(handle)
 assert extension_info["CFBundleIdentifier"] == "com.aaz.tweakmanager.importer"
-assert extension_info["CFBundleVersion"] == "42"
+assert extension_info["CFBundleVersion"] == "43"
 assert extension_info["CFBundlePackageType"] == "XPC!"
 extension_definition = extension_info["NSExtension"]
 assert extension_definition["NSExtensionPointIdentifier"] == "com.apple.share-services"
@@ -63,7 +65,7 @@ assert extension_entitlements == {
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta42" in control
+assert "Version: 0.1.0~beta43" in control
 assert "Priority: optional" in control
 
 excluded_directories = {".git", ".theos-build", "packages"}
@@ -310,7 +312,7 @@ assert 'ATMRunBackupToolWithPrivilege(dpkgQuery, @[@"--listfiles", record.packag
 for required_automatic_capture_guard in (
     'packagesIncludingDependenciesForSelected', 'installedPackageCanBeRepackedWithoutPrivateData',
     'record.provides = fields[@"Provides"]', '[record.provides componentsSeparatedByString:@","]',
-    '@"--listfiles"', '@"--control-list"', '@"--control-show"', '@"md5sums"', '@"--verify"', '@"-xpf"', '@"--build"', '@"verified-repack"',
+    '@"--listfiles"', '@"--control-list"', '@"--control-show"', '@"md5sums"', '@"--verify"', '@"-x"', '@"--build"', '@"verified-repack"',
     'repackInventoryForRecord', 'rootedMatches > directMatches', 'S_ISDIR(info.st_mode)',
     '@"supportingDependency"', '@"/var/mobile"', '@"/Library/Preferences"',
     'restoreSanitizedSources', '@"R40-SOURCE-RESTORE"', '@"sourcesToRestore"',
@@ -325,8 +327,16 @@ assert "filenames, paths, providers, passwords, or archive contents" in all_text
 assert 'Portable Backup Verified' in all_text
 assert 'Backup Not Portable' in all_text
 assert '@"directories": directoryPaths.array' in all_text
-assert '@"archive-create"' in all_text
-assert '@"archive-extract"' in all_text
+assert '@"archive-fallback-create"' in all_text
+assert '@"archive-fallback-extract"' in all_text
+assert 'stagePayloadDirectlyFromRoot' in backup_manager_text
+assert '@"direct-copy-verify"' in all_text
+assert 'ATMVerifyStagedPayload' in backup_manager_text
+assert '@"package-reopen"' in all_text
+assert '@"package-payload-verify"' in all_text
+assert 'runBackupPreflight' in all_text
+assert 'cancelCurrentBackup' in all_text
+assert 'Share Privacy-Safe Report' in all_text
 assert 'ATMCreateDirectoryTreeBelowRoot' in backup_manager_text
 assert 'mkdirat(directoryFD, name, 0755)' in backup_manager_text
 assert 'openat(directoryFD, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)' in backup_manager_text
@@ -355,6 +365,38 @@ with tempfile.TemporaryDirectory() as temporary:
     subprocess.run(["tar", "-cpf", str(archive), "-C", str(payload_root), "-T", str(file_list)], check=True, capture_output=True)
     with tarfile.open(archive) as handle:
         assert handle.getnames() == ["shared/wanted"], "archive capture recursed beyond the verified file list"
+
+    synthetic = payload_root / "usr" / "lib" / "aaz-preflight"
+    synthetic.mkdir(parents=True)
+    executable = synthetic / "probe"
+    executable.write_text("safe synthetic payload\n")
+    executable.chmod(0o755)
+    (synthetic / "probe-link").symlink_to("probe")
+    direct_stage = temporary_root / "direct-stage"
+    direct_stage.mkdir()
+    for directory in ("usr", "usr/lib", "usr/lib/aaz-preflight"):
+        (direct_stage / directory).mkdir(exist_ok=True)
+    shutil.copy2(executable, direct_stage / "usr/lib/aaz-preflight/probe", follow_symlinks=False)
+    os.symlink(os.readlink(synthetic / "probe-link"), direct_stage / "usr/lib/aaz-preflight/probe-link")
+    assert (direct_stage / "usr/lib/aaz-preflight/probe").read_bytes() == executable.read_bytes()
+    assert (direct_stage / "usr/lib/aaz-preflight/probe").stat().st_mode & 0o777 == 0o755
+    assert (direct_stage / "usr/lib/aaz-preflight/probe-link").is_symlink()
+    assert os.readlink(direct_stage / "usr/lib/aaz-preflight/probe-link") == "probe"
+
+    package_stage = temporary_root / "package-stage"
+    shutil.copytree(direct_stage, package_stage, symlinks=True)
+    (package_stage / "DEBIAN").mkdir()
+    (package_stage / "DEBIAN/control").write_text(
+        "Package: com.aaz.preflight\nVersion: 1\nArchitecture: all\n"
+        "Maintainer: AAZ\nDescription: safe synthetic preflight\n"
+    )
+    synthetic_deb = temporary_root / "preflight.deb"
+    subprocess.run(["dpkg-deb", "--build", str(package_stage), str(synthetic_deb)], check=True, capture_output=True)
+    reopened = temporary_root / "reopened"
+    subprocess.run(["dpkg-deb", "--extract", str(synthetic_deb), str(reopened)], check=True, capture_output=True)
+    assert (reopened / "usr/lib/aaz-preflight/probe").read_bytes() == executable.read_bytes()
+    assert (reopened / "usr/lib/aaz-preflight/probe").stat().st_mode & 0o777 == 0o755
+    assert os.readlink(reopened / "usr/lib/aaz-preflight/probe-link") == "probe"
 assert 'Only a healthy backup can be imported' not in all_text
 assert "Already Imported" in all_text
 assert "NSFileCoordinator" in all_text

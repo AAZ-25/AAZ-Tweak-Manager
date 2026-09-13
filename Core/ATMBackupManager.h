@@ -4,6 +4,7 @@
 NS_ASSUME_NONNULL_BEGIN
 
 FOUNDATION_EXPORT NSString *const ATMBackupErrorDomain;
+typedef void (^ATMBackupProgressHandler)(NSString *stage, NSUInteger completed, NSUInteger total);
 typedef NS_ENUM(NSInteger, ATMBackupErrorCode) {
     ATMBackupErrorPasswordRequired = 40,
     ATMBackupErrorWrongPassword = 41,
@@ -14,6 +15,15 @@ typedef NS_ENUM(NSInteger, ATMBackupErrorCode) {
 - (NSArray<NSURL *> *)availableBackups;
 - (nullable NSURL *)createBackupWithPackages:(NSArray<ATMPackageRecord *> *)packages sources:(NSArray<ATMSourceRecord *> *)sources error:(NSError **)error;
 - (nullable NSURL *)createBackupWithPackages:(NSArray<ATMPackageRecord *> *)packages sources:(NSArray<ATMSourceRecord *> *)sources profileName:(nullable NSString *)profileName password:(nullable NSString *)password error:(NSError **)error;
+- (nullable NSURL *)createBackupWithPackages:(NSArray<ATMPackageRecord *> *)packages
+                                     sources:(NSArray<ATMSourceRecord *> *)sources
+                                 profileName:(nullable NSString *)profileName
+                                    password:(nullable NSString *)password
+                            progressHandler:(nullable ATMBackupProgressHandler)progressHandler
+                                       error:(NSError **)error;
+- (nullable NSDictionary *)runBackupPreflight:(NSError **)error;
+- (void)cancelCurrentBackup;
+@property(nonatomic, copy, readonly, nullable) NSDictionary *lastBackupAttemptReport;
 - (BOOL)isEncryptedBackup:(NSURL *)backupURL;
 - (nullable NSDictionary *)manifestForBackup:(NSURL *)backupURL error:(NSError **)error;
 - (nullable NSDictionary *)manifestForBackup:(NSURL *)backupURL password:(nullable NSString *)password error:(NSError **)error;

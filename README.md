@@ -8,6 +8,9 @@ AAZ Tweak Manager is a Rootless jailbreak app for keeping a clean, portable reco
 - Lets you review the selection, search packages, and save reusable selection profiles.
 - Always creates a useful `.aaztmbackup` inventory containing selected packages, required non-system dependencies, and sanitized sources. It becomes fully portable when a verified DEB is captured for every included package.
 - Prefers the original exact DEB from the local cache or an authenticated repository, then safely repacks unchanged installed package files when the original is unavailable. No package-by-package sharing is required.
+- Runs a privacy-safe synthetic system check before touching selected package data, including privileged staging, DEB build/reopen, archive integrity, and the shared import inbox.
+- Shows count-only backup progress with safe cancellation; cancellation removes temporary data and does not leave a partial backup.
+- Offers one privacy-safe report automatically whenever a backup fails or remains incomplete.
 - Supports standard or password-encrypted backups. Passwords are never stored.
 - Verifies archive integrity before an import is accepted. Limited backups remain usable as inventory and source records, while full offline Restore stays blocked until payload coverage reaches 100%.
 - Imports from Files through **Share → Save to AAZ Tweak Manager**.
