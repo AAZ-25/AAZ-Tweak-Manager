@@ -19,7 +19,7 @@ case "$phase" in
   metadata)
     test -f "$deb"
     test "$(dpkg-deb -f "$deb" Package)" = "com.aaz.tweakmanager"
-    test "$(dpkg-deb -f "$deb" Version)" = "0.1.0~beta43"
+    test "$(dpkg-deb -f "$deb" Version)" = "0.1.0~beta44"
     test "$(dpkg-deb -f "$deb" Architecture)" = "iphoneos-arm64"
     dpkg-deb -c "$deb" > "$package_list"
     ;;
@@ -65,10 +65,10 @@ assert extension_entitlements == {
     "application-identifier": "com.aaz.tweakmanager.importer",
     "com.apple.security.application-groups": ["group.com.aaz.tweakmanager"],
 }
-assert app_info["CFBundleVersion"] == "43"
+assert app_info["CFBundleVersion"] == "44"
 assert "CFBundleDocumentTypes" not in app_info
 assert extension_info["CFBundleIdentifier"] == "com.aaz.tweakmanager.importer"
-assert extension_info["CFBundleVersion"] == "43"
+assert extension_info["CFBundleVersion"] == "44"
 definition = extension_info["NSExtension"]
 assert definition["NSExtensionPointIdentifier"] == "com.apple.share-services"
 assert definition["NSExtensionPrincipalClass"] == "AAZShareViewController"
@@ -145,6 +145,9 @@ PY
     grep -Fq 'direct-copy-verify' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'archive-fallback-extract' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'package-payload-verify' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'preflight-workspace' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'preflight-reopen-directory' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'package-reopen-directory' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'archive-validation-failed' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'package-hash-failed' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'source-hash-failed' "$RUNNER_TEMP/aaz-app.strings"

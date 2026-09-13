@@ -27,7 +27,7 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "43"
+assert info["CFBundleVersion"] == "44"
 assert info["LSSupportsOpeningDocumentsInPlace"] is False
 assert "CFBundleDocumentTypes" not in info
 
@@ -47,7 +47,7 @@ assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["Ap
 with (ROOT / "Extension/Resources/Info.plist").open("rb") as handle:
     extension_info = plistlib.load(handle)
 assert extension_info["CFBundleIdentifier"] == "com.aaz.tweakmanager.importer"
-assert extension_info["CFBundleVersion"] == "43"
+assert extension_info["CFBundleVersion"] == "44"
 assert extension_info["CFBundlePackageType"] == "XPC!"
 extension_definition = extension_info["NSExtension"]
 assert extension_definition["NSExtensionPointIdentifier"] == "com.apple.share-services"
@@ -65,8 +65,9 @@ assert extension_entitlements == {
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta43" in control
+assert "Version: 0.1.0~beta44" in control
 assert "Priority: optional" in control
+assert "Depends: firmware (>= 15.0), coreutils, diffutils, dpkg, tar" in control
 
 excluded_directories = {".git", ".theos-build", "packages"}
 public_files = [
@@ -335,6 +336,13 @@ assert 'ATMVerifyStagedPayload' in backup_manager_text
 assert '@"package-reopen"' in all_text
 assert '@"package-payload-verify"' in all_text
 assert 'runBackupPreflight' in all_text
+assert 'newBackupWorkingRootNamed' in backup_manager_text
+assert '@"preflight-workspace"' in all_text
+assert '@"preflight-reopen-directory"' in all_text
+assert 'failureCounts[preflightStage] = @1' in backup_manager_text
+assert 'ATMFilesEqualWithOptionalPrivilegedTool' in backup_manager_text
+assert 'ATMRunBackupToolWithPrivilege(dpkgDeb, @[@"--version"], YES, nil)' in backup_manager_text
+assert '@"/usr/bin/true"' not in backup_manager_text
 assert 'cancelCurrentBackup' in all_text
 assert 'Share Privacy-Safe Report' in all_text
 assert 'ATMCreateDirectoryTreeBelowRoot' in backup_manager_text
