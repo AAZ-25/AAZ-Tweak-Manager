@@ -80,7 +80,7 @@ NSArray<NSDictionary<NSString *, NSString *> *> *ATMParseDebianParagraphs(NSStri
 - (NSDictionary *)manifestDictionary {
     return @{ @"packageID": self.packageID ?: @"", @"name": self.name ?: @"", @"version": self.version ?: @"",
               @"architecture": self.architecture ?: @"", @"section": self.section ?: @"", @"priority": self.priority ?: @"",
-              @"origin": self.sourceOrigin ?: @"", @"depends": self.depends ?: @"", @"essential": @(self.essential),
+              @"origin": self.sourceOrigin ?: @"", @"depends": self.depends ?: @"", @"provides": self.provides ?: @"", @"essential": @(self.essential),
               @"automatic": @(self.automaticallyInstalled), @"personal": @(self.personalCandidate),
               @"classificationReason": self.classificationReason ?: @"", @"installedAt": self.installedAt ? ATMISODateString(self.installedAt) : [NSNull null],
               @"dateConfidence": @(self.dateConfidence) };
@@ -250,7 +250,9 @@ static NSString *ATMSanitizeSourceText(NSString *text, BOOL *didRedact) {
         record.section = fields[@"Section"] ?: @"";
         record.priority = fields[@"Priority"] ?: @"";
         record.sourceOrigin = fields[@"Origin"] ?: @"";
-        record.depends = fields[@"Depends"] ?: @"";
+        NSString *depends = fields[@"Depends"] ?: @"", *preDepends = fields[@"Pre-Depends"] ?: @"";
+        record.depends = preDepends.length && depends.length ? [NSString stringWithFormat:@"%@, %@", preDepends, depends] : (preDepends.length ? preDepends : depends);
+        record.provides = fields[@"Provides"] ?: @"";
         NSString *essentialValue = fields[@"Essential"];
         record.essential = essentialValue.length > 0 && [essentialValue caseInsensitiveCompare:@"yes"] == NSOrderedSame;
         record.automaticallyInstalled = [automatic[packageID] boolValue];
@@ -322,16 +324,16 @@ static BOOL ATMRestoreDiagnosticCodeAllowed(NSString *code) {
     static NSSet<NSString *> *allowedCodes; static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         allowedCodes = [NSSet setWithArray:@[
-            @"R38-READINESS", @"R38-READY", @"R38-BLOCKED", @"R38-STARTED", @"R38-OK", @"R38-PRECHECK", @"R38-APT-PREFLIGHT",
-            @"R38-PERSONA", @"R38-SPAWN", @"R38-SIGNAL", @"R38-LOCK", @"R38-PRIVILEGE", @"R38-STORAGE", @"R38-DPKG", @"R38-DPKG-PREFLIGHT", @"R38-PARTIAL",
-            @"R38-DEPENDENCY", @"R38-ARCHIVE", @"R38-AUTH", @"R38-SOURCE-AUTH", @"R38-NETWORK", @"R38-APT", @"R38-POSTSCAN", @"R38-VERIFY", @"R38-UNKNOWN"
+            @"R39-READINESS", @"R39-READY", @"R39-BLOCKED", @"R39-STARTED", @"R39-OK", @"R39-PRECHECK", @"R39-APT-PREFLIGHT",
+            @"R39-PERSONA", @"R39-SPAWN", @"R39-SIGNAL", @"R39-LOCK", @"R39-PRIVILEGE", @"R39-STORAGE", @"R39-DPKG", @"R39-DPKG-PREFLIGHT", @"R39-PARTIAL",
+            @"R39-DEPENDENCY", @"R39-ARCHIVE", @"R39-AUTH", @"R39-SOURCE-AUTH", @"R39-SOURCE-RESTORE", @"R39-NETWORK", @"R39-APT", @"R39-POSTSCAN", @"R39-VERIFY", @"R39-UNKNOWN"
         ]];
     });
     return [code isKindOfClass:NSString.class] && [allowedCodes containsObject:code];
 }
 
 void ATMSetRestoreDiagnosticState(NSString *code, NSInteger exitCode) {
-    NSString *safeCode = ATMRestoreDiagnosticCodeAllowed(code) ? code : @"R38-UNKNOWN";
+    NSString *safeCode = ATMRestoreDiagnosticCodeAllowed(code) ? code : @"R39-UNKNOWN";
     [NSUserDefaults.standardUserDefaults setObject:safeCode forKey:ATMLastRestoreCodeKey];
     [NSUserDefaults.standardUserDefaults setInteger:exitCode forKey:ATMLastRestoreExitCodeKey];
 }
@@ -414,6 +416,8 @@ NSURL *ATMWriteDiagnosticReport(ATMEnvironment *environment,
     else if ([environment.dpkgStatusPath hasSuffix:@"/var/lib/dpkg/status"]) databaseKind = @"var-lib-dpkg";
     NSFileManager *fm = NSFileManager.defaultManager;
     NSDictionary *info = NSBundle.mainBundle.infoDictionary;
+    NSString *storedRestoreCode = [NSUserDefaults.standardUserDefaults stringForKey:ATMLastRestoreCodeKey];
+    BOOL currentRestoreCode = [storedRestoreCode hasPrefix:@"R39-"];
     NSMutableArray<NSString *> *lines = [@[
         @"AAZ Tweak Manager Diagnostic",
         @"format=1",
@@ -434,8 +438,8 @@ NSURL *ATMWriteDiagnosticReport(ATMEnvironment *environment,
         [NSString stringWithFormat:@"selected=%lu", (unsigned long)selectedPackageIDs.count],
         [NSString stringWithFormat:@"importStage=%@", [NSUserDefaults.standardUserDefaults stringForKey:@"ATMLastImportStageV1"] ?: @"not-run"],
         [NSString stringWithFormat:@"importErrorCode=%ld", (long)[NSUserDefaults.standardUserDefaults integerForKey:@"ATMLastImportErrorCodeV1"]],
-        [NSString stringWithFormat:@"restoreCode=%@", [NSUserDefaults.standardUserDefaults stringForKey:ATMLastRestoreCodeKey] ?: @"not-run"],
-        [NSString stringWithFormat:@"restoreExitCode=%ld", (long)[NSUserDefaults.standardUserDefaults integerForKey:ATMLastRestoreExitCodeKey]],
+        [NSString stringWithFormat:@"restoreCode=%@", currentRestoreCode ? storedRestoreCode : @"not-run"],
+        [NSString stringWithFormat:@"restoreExitCode=%ld", (long)(currentRestoreCode ? [NSUserDefaults.standardUserDefaults integerForKey:ATMLastRestoreExitCodeKey] : -1)],
         @"restoreDiagnosticPrivacy=fixed-code-and-exit-only",
         @"privacy=counts-and-stage-flags-only"
     ] mutableCopy];

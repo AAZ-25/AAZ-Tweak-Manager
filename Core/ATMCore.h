@@ -17,6 +17,7 @@ typedef NS_ENUM(NSInteger, ATMInstallDateConfidence) {
 @property(nonatomic, copy) NSString *priority;
 @property(nonatomic, copy) NSString *sourceOrigin;
 @property(nonatomic, copy) NSString *depends;
+@property(nonatomic, copy) NSString *provides;
 @property(nonatomic, assign) BOOL essential;
 @property(nonatomic, assign) BOOL automaticallyInstalled;
 @property(nonatomic, assign) BOOL personalCandidate;
