@@ -11,7 +11,7 @@ permissions:
 
 env:
   THEOS: ${{ github.workspace }}/.theos-build
-  SOURCE_SHA: 89a5d6de63202468d9f66a0cb655dd30bae17ef6
+  SOURCE_SHA: e8fa6aa87b2cc28ea0428f3e6c7dbe1f145466dc
   BASE_SHA: 541057c2b517a57e47bb6f356c9c177c3b0bb1fe
   RELEASE_TAG: v0.1.0-beta39
   PREVIOUS_TAG: v0.1.0-beta38
@@ -20,6 +20,7 @@ env:
   PREVIOUS_ACTION_ID_1: "34730932008"
   PREVIOUS_ACTION_ID_2: "34731277655"
   PREVIOUS_ACTION_ID_3: "34733780113"
+  PREVIOUS_ACTION_ID_4: "34734376014"
   ASSET_NAME: AAZ-Tweak-Manager-rootless.deb
 
 jobs:
