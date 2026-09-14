@@ -199,6 +199,43 @@ static BOOL ATMResetAndPreparePayloadStage(NSURL *stage, NSString *payloadRoot, 
     return YES;
 }
 
+static NSString *ATMPruneUnexpectedStagedEntries(NSURL *stage, NSArray<NSString *> *safePaths, NSArray<NSString *> *directoryPaths) {
+    NSArray<NSString *> *requiredDirectories = ATMRequiredDirectoryPaths(safePaths, directoryPaths);
+    if (!requiredDirectories) return @"source";
+    NSSet<NSString *> *expectedFiles = [NSSet setWithArray:safePaths ?: @[]];
+    NSSet<NSString *> *expectedDirectories = [NSSet setWithArray:requiredDirectories];
+    NSMutableArray<NSDictionary *> *unexpectedDirectories = [NSMutableArray array];
+    __block BOOL enumerationFailed = NO;
+    NSDirectoryEnumerator *enumerator = [NSFileManager.defaultManager enumeratorAtURL:stage includingPropertiesForKeys:nil options:0 errorHandler:^BOOL(NSURL *url, NSError *enumerationError) {
+        (void)url; (void)enumerationError; enumerationFailed = YES; return NO;
+    }];
+    for (NSURL *url in enumerator) {
+        NSString *relativePath = [url.path substringFromIndex:stage.path.length + 1];
+        struct stat stagedInfo;
+        if (!relativePath.length || lstat(url.path.fileSystemRepresentation, &stagedInfo) != 0) return @"enumeration";
+        if (S_ISDIR(stagedInfo.st_mode)) {
+            if (![expectedDirectories containsObject:relativePath]) {
+                [unexpectedDirectories addObject:@{ @"url": url, @"path": relativePath }];
+            }
+            continue;
+        }
+        if (![expectedFiles containsObject:relativePath] && unlink(url.path.fileSystemRepresentation) != 0) return @"unexpected-entry";
+    }
+    if (enumerationFailed) return @"enumeration";
+    [unexpectedDirectories sortUsingComparator:^NSComparisonResult(NSDictionary *left, NSDictionary *right) {
+        NSUInteger leftDepth = [left[@"path"] pathComponents].count;
+        NSUInteger rightDepth = [right[@"path"] pathComponents].count;
+        if (leftDepth > rightDepth) return NSOrderedAscending;
+        if (leftDepth < rightDepth) return NSOrderedDescending;
+        return [right[@"path"] compare:left[@"path"]];
+    }];
+    for (NSDictionary *entry in unexpectedDirectories) {
+        NSURL *url = entry[@"url"];
+        if (rmdir(url.path.fileSystemRepresentation) != 0) return @"unexpected-entry";
+    }
+    return nil;
+}
+
 static NSString *ATMStagedPayloadVerificationFailure(NSURL *stage, NSString *payloadRoot, NSArray<NSString *> *safePaths, NSArray<NSString *> *directoryPaths, NSString *compareTool) {
     NSArray<NSString *> *requiredDirectories = ATMRequiredDirectoryPaths(safePaths, directoryPaths);
     if (!requiredDirectories) return @"source";
@@ -211,9 +248,8 @@ static NSString *ATMStagedPayloadVerificationFailure(NSURL *stage, NSString *pay
         struct stat stagedInfo;
         if (!relativePath.length || lstat(url.path.fileSystemRepresentation, &stagedInfo) != 0) return @"enumeration";
         if (S_ISDIR(stagedInfo.st_mode)) {
-            // Transfer tools may materialize harmless structural parents that carry no
-            // payload bytes. Unexpected non-directory entries remain rejected below.
-            if ([expectedDirectories containsObject:relativePath]) [seenDirectories addObject:relativePath];
+            if (![expectedDirectories containsObject:relativePath]) return @"unexpected-directory";
+            [seenDirectories addObject:relativePath];
             continue;
         }
         if (![expectedFiles containsObject:relativePath]) return @"unexpected-entry";
@@ -538,6 +574,8 @@ static NSData *ATMDecryptArchive(NSData *container, NSString *password, NSError 
         NSDictionary *copyResult = ATMRunBackupToolWithPrivilege(copy, @[@"-P", sourcePath, destinationPath], YES, nil);
         if ([copyResult[@"exitCode"] integerValue] != 0) { if (failureStage) *failureStage = @"direct-copy"; return NO; }
     }
+    NSString *pruneFailure = ATMPruneUnexpectedStagedEntries(stage, safePaths, directoryPaths);
+    if (pruneFailure) { if (failureStage) *failureStage = ATMVerificationStage(@"direct-copy-verify", pruneFailure); return NO; }
     NSString *normalizationFailure = ATMNormalizeStagedPayloadModes(stage, payloadRoot, safePaths, directoryPaths, chmodTool);
     if (normalizationFailure) { if (failureStage) *failureStage = ATMVerificationStage(@"direct-copy-verify", normalizationFailure); return NO; }
     NSString *verificationFailure = ATMStagedPayloadVerificationFailure(stage, payloadRoot, safePaths, directoryPaths, compare);
@@ -587,7 +625,9 @@ static NSData *ATMDecryptArchive(NSData *container, NSString *password, NSError 
         } else {
             NSString *compare = [self backupExecutableForPaths:@[@"/usr/bin/cmp", @"/bin/cmp"]];
             NSString *chmodTool = [self backupExecutableForPaths:@[@"/bin/chmod", @"/usr/bin/chmod"]];
-            NSString *normalizationFailure = ATMNormalizeStagedPayloadModes(fallbackStage, payloadRoot.path, paths, directories, chmodTool);
+            NSString *pruneFailure = ATMPruneUnexpectedStagedEntries(fallbackStage, paths, directories);
+            if (pruneFailure) fallbackFailure = ATMVerificationStage(@"preflight-fallback-verify", pruneFailure);
+            NSString *normalizationFailure = fallbackFailure ? nil : ATMNormalizeStagedPayloadModes(fallbackStage, payloadRoot.path, paths, directories, chmodTool);
             if (normalizationFailure) fallbackFailure = ATMVerificationStage(@"preflight-fallback-verify", normalizationFailure);
             NSString *verificationFailure = fallbackFailure ? nil : ATMStagedPayloadVerificationFailure(fallbackStage, payloadRoot.path, paths, directories, compare);
             if (verificationFailure) fallbackFailure = ATMVerificationStage(@"preflight-fallback-verify", verificationFailure);
@@ -662,6 +702,8 @@ static NSData *ATMDecryptArchive(NSData *container, NSString *password, NSError 
         if ([extract[@"exitCode"] integerValue] != 0) { if (failureStage) *failureStage = @"archive-fallback-extract"; return nil; }
         NSString *compare = [self backupExecutableForPaths:@[@"/usr/bin/cmp", @"/bin/cmp"]];
         NSString *chmodTool = [self backupExecutableForPaths:@[@"/bin/chmod", @"/usr/bin/chmod"]];
+        NSString *pruneFailure = ATMPruneUnexpectedStagedEntries(stage, safePaths, directoryPaths);
+        if (pruneFailure) { if (failureStage) *failureStage = ATMVerificationStage(@"archive-fallback-verify", pruneFailure); return nil; }
         NSString *normalizationFailure = ATMNormalizeStagedPayloadModes(stage, payloadRoot, safePaths, directoryPaths, chmodTool);
         if (normalizationFailure) { if (failureStage) *failureStage = ATMVerificationStage(@"archive-fallback-verify", normalizationFailure); return nil; }
         NSString *verificationFailure = ATMStagedPayloadVerificationFailure(stage, payloadRoot, safePaths, directoryPaths, compare);

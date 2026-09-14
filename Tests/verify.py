@@ -27,7 +27,7 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "47"
+assert info["CFBundleVersion"] == "48"
 assert info["LSSupportsOpeningDocumentsInPlace"] is False
 assert "CFBundleDocumentTypes" not in info
 
@@ -47,7 +47,7 @@ assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["Ap
 with (ROOT / "Extension/Resources/Info.plist").open("rb") as handle:
     extension_info = plistlib.load(handle)
 assert extension_info["CFBundleIdentifier"] == "com.aaz.tweakmanager.importer"
-assert extension_info["CFBundleVersion"] == "47"
+assert extension_info["CFBundleVersion"] == "48"
 assert extension_info["CFBundlePackageType"] == "XPC!"
 extension_definition = extension_info["NSExtension"]
 assert extension_definition["NSExtensionPointIdentifier"] == "com.apple.share-services"
@@ -65,7 +65,7 @@ assert extension_entitlements == {
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta47" in control
+assert "Version: 0.1.0~beta48" in control
 assert "Priority: optional" in control
 assert "Depends: firmware (>= 15.0), coreutils, diffutils, dpkg, tar" in control
 
@@ -347,6 +347,10 @@ assert 'ATMStagedPayloadVerificationFailure' in backup_manager_text
 assert 'ATMVerificationStage' in backup_manager_text
 assert 'ATMRequiredDirectoryPaths' in backup_manager_text
 assert 'ATMNormalizeStagedPayloadModes' in backup_manager_text
+assert 'ATMPruneUnexpectedStagedEntries' in backup_manager_text
+assert 'unlink(url.path.fileSystemRepresentation)' in backup_manager_text
+assert 'rmdir(url.path.fileSystemRepresentation)' in backup_manager_text
+assert 'if (![expectedDirectories containsObject:relativePath]) return @"unexpected-directory";' in backup_manager_text
 assert 'pathsWithListedDescendants' in backup_manager_text
 assert 'rootedMatches == listedPaths.count' in backup_manager_text
 assert 'directMatches != listedPaths.count' in backup_manager_text
@@ -354,8 +358,8 @@ assert '[pathsWithListedDescendants containsObject:path]' in backup_manager_text
 assert 'stat(physicalPath.fileSystemRepresentation, &resolvedInfo)' in backup_manager_text
 assert 'for (NSString *relativePath in directoryPaths ?: @[])' in backup_manager_text
 assert 'stat(sourcePath.fileSystemRepresentation, &sourceInfo)' in backup_manager_text
-assert 'if ([expectedDirectories containsObject:relativePath]) [seenDirectories addObject:relativePath];' in backup_manager_text
-assert 'if (![expectedDirectories containsObject:relativePath]) return @"unexpected-directory";' not in backup_manager_text
+assert 'NSString *pruneFailure = ATMPruneUnexpectedStagedEntries(stage, safePaths, directoryPaths);' in backup_manager_text
+assert 'NSString *pruneFailure = ATMPruneUnexpectedStagedEntries(fallbackStage, paths, directories);' in backup_manager_text
 assert '@"-P", sourcePath, destinationPath' in backup_manager_text
 assert '@"-pP", sourcePath, destinationPath' not in backup_manager_text
 assert '@[@"-x", @"-m", @"-f", tarURL.path' in backup_manager_text
@@ -501,10 +505,21 @@ with tempfile.TemporaryDirectory() as temporary:
     )
     assert not (structural_stage / "usr").is_symlink()
     assert (structural_stage / "usr/lib/aaz-package/payload").read_bytes() == redirected_payload.read_bytes()
-    # Extra structural directories contain no payload bytes and are harmless;
-    # unexpected non-directory entries remain rejected by the product verifier.
+    # Transfer-created entries outside the exact dpkg inventory are removed,
+    # including nested structural directories once their contents are gone.
     (structural_stage / "transfer-structure").mkdir()
-    assert not any((structural_stage / "transfer-structure").iterdir())
+    (structural_stage / "transfer-structure/metadata").write_text("not package payload")
+    (structural_stage / "usr/lib/aaz-package/._payload").write_text("transfer metadata")
+    expected_files = {"usr/lib/aaz-package/payload"}
+    expected_directories = {"usr", "usr/lib", "usr/lib/aaz-package"}
+    for candidate in sorted(structural_stage.rglob("*"), key=lambda item: len(item.relative_to(structural_stage).parts), reverse=True):
+        relative = str(candidate.relative_to(structural_stage))
+        if candidate.is_dir() and not candidate.is_symlink():
+            if relative not in expected_directories:
+                candidate.rmdir()
+        elif relative not in expected_files:
+            candidate.unlink()
+    assert {str(item.relative_to(structural_stage)) for item in structural_stage.rglob("*")} == expected_files | expected_directories
 
     structural_tar_list = temporary_root / "structural-files"
     structural_tar_list.write_text("usr/lib/aaz-package/payload\n")
