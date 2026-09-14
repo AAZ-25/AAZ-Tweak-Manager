@@ -12,7 +12,6 @@
 #import <sys/wait.h>
 #import <unistd.h>
 
-extern char **environ;
 #ifndef POSIX_SPAWN_PERSONA_FLAGS_OVERRIDE
 #define POSIX_SPAWN_PERSONA_FLAGS_OVERRIDE 1
 #endif
@@ -51,21 +50,6 @@ static BOOL ATMCopyFileContents(NSURL *sourceURL, NSURL *destinationURL, NSInteg
     return copied;
 }
 
-static NSString *ATMRunDPKGDebField(ATMEnvironment *environment, NSURL *debURL) {
-    NSArray *candidates = @[[environment pathInsideRoot:@"/usr/bin/dpkg-deb"], [environment pathInsideRoot:@"/bin/dpkg-deb"]]; NSString *tool = nil;
-    for (NSString *candidate in candidates) if ([NSFileManager.defaultManager isExecutableFileAtPath:candidate]) { tool = candidate; break; }
-    if (!tool) return @"";
-    int outputPipe[2]; if (pipe(outputPipe) != 0) return @"";
-    posix_spawn_file_actions_t actions; posix_spawn_file_actions_init(&actions); posix_spawn_file_actions_adddup2(&actions, outputPipe[1], STDOUT_FILENO); posix_spawn_file_actions_adddup2(&actions, outputPipe[1], STDERR_FILENO); posix_spawn_file_actions_addclose(&actions, outputPipe[0]);
-    char *const arguments[] = {(char *)tool.fileSystemRepresentation, "--field", (char *)debURL.path.fileSystemRepresentation, NULL};
-    pid_t pid = 0; int spawnResult = posix_spawn(&pid, tool.fileSystemRepresentation, &actions, NULL, arguments, environ); posix_spawn_file_actions_destroy(&actions); close(outputPipe[1]);
-    if (spawnResult != 0) { close(outputPipe[0]); return @""; }
-    NSMutableData *data = [NSMutableData data]; uint8_t buffer[8192]; ssize_t count = 0;
-    while ((count = read(outputPipe[0], buffer, sizeof(buffer))) > 0) { if (data.length + (NSUInteger)count > 1024 * 1024) { kill(pid, SIGKILL); break; } [data appendBytes:buffer length:(NSUInteger)count]; }
-    close(outputPipe[0]); int status = 0; waitpid(pid, &status, 0); if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) return @"";
-    return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"";
-}
-
 static NSDictionary *ATMRunBackupToolWithPrivilege(NSString *tool, NSArray<NSString *> *arguments, BOOL asRoot, NSString *workingDirectory) {
     if (!tool.length) return @{ @"exitCode": @(-1), @"output": @"" };
     int outputPipe[2]; if (pipe(outputPipe) != 0) return @{ @"exitCode": @(-1), @"output": @"" };
@@ -100,6 +84,24 @@ static NSDictionary *ATMRunBackupToolWithPrivilege(NSString *tool, NSArray<NSStr
 
 static NSDictionary *ATMRunBackupTool(NSString *tool, NSArray<NSString *> *arguments) {
     return ATMRunBackupToolWithPrivilege(tool, arguments, NO, nil);
+}
+
+static NSString *ATMReadDPKGDebField(ATMEnvironment *environment, NSURL *debURL, NSString *field, NSString **failureStage) {
+    static NSSet<NSString *> *allowedFields; static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{ allowedFields = [NSSet setWithArray:@[@"Package", @"Version", @"Architecture", @"Priority", @"Essential"]]; });
+    if (![allowedFields containsObject:field] || !debURL.isFileURL) { if (failureStage) *failureStage = @"identity-tool"; return nil; }
+    NSArray *candidates = @[[environment pathInsideRoot:@"/usr/bin/dpkg-deb"], [environment pathInsideRoot:@"/bin/dpkg-deb"]]; NSString *tool = nil;
+    for (NSString *candidate in candidates) if ([NSFileManager.defaultManager isExecutableFileAtPath:candidate]) { tool = candidate; break; }
+    if (!tool.length) { if (failureStage) *failureStage = @"identity-tool"; return nil; }
+    NSDictionary *run = ATMRunBackupTool(tool, @[@"--field", debURL.path, field]);
+    if ([run[@"exitCode"] integerValue] != 0) { if (failureStage) *failureStage = @"identity-tool"; return nil; }
+    NSString *output = [run[@"output"] isKindOfClass:NSString.class] ? run[@"output"] : @"";
+    NSString *value = [output stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if ([value rangeOfCharacterFromSet:NSCharacterSet.newlineCharacterSet].location != NSNotFound || value.length > 512) {
+        if (failureStage) *failureStage = [@"identity-" stringByAppendingString:field.lowercaseString];
+        return nil;
+    }
+    return value;
 }
 
 static BOOL ATMFilesEqualWithOptionalPrivilegedTool(NSString *sourcePath, NSString *destinationPath, NSString *compareTool) {
@@ -317,6 +319,13 @@ static BOOL ATMBackupPackageIDIsValid(NSString *value) {
     return [expression numberOfMatchesInString:value options:0 range:NSMakeRange(0, value.length)] == 1;
 }
 
+static BOOL ATMBackupVersionIsValid(NSString *value) {
+    if (![value isKindOfClass:NSString.class] || value.length < 1 || value.length > 256) return NO;
+    static NSRegularExpression *expression; static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{ expression = [NSRegularExpression regularExpressionWithPattern:@"^[0-9A-Za-z.+:~_-]+$" options:0 error:nil]; });
+    return [expression numberOfMatchesInString:value options:0 range:NSMakeRange(0, value.length)] == 1;
+}
+
 static NSData *ATMRepackedControlData(NSDictionary<NSString *, NSString *> *fields) {
     NSArray<NSString *> *required = @[@"Package", @"Version", @"Architecture"];
     for (NSString *key in required) if (![fields[key] isKindOfClass:NSString.class] || ![fields[key] length]) return nil;
@@ -334,18 +343,26 @@ static NSData *ATMRepackedControlData(NSDictionary<NSString *, NSString *> *fiel
     return [control dataUsingEncoding:NSUTF8StringEncoding];
 }
 
-static NSDictionary *ATMValidatedBackupPayload(ATMEnvironment *environment, NSURL *url) {
+static NSDictionary *ATMValidatedBackupPayloadWithFailure(ATMEnvironment *environment, NSURL *url, NSString **failureStage) {
     NSNumber *size = nil; [url getResourceValue:&size forKey:NSURLFileSizeKey error:nil];
-    if (!url.isFileURL || ![NSFileManager.defaultManager isReadableFileAtPath:url.path] || size.unsignedLongLongValue == 0 || size.unsignedLongLongValue > 256ULL * 1024ULL * 1024ULL) return nil;
-    NSDictionary *fields = ATMParseDebianParagraph(ATMRunDPKGDebField(environment, url));
-    NSString *packageID = [fields[@"Package"] isKindOfClass:NSString.class] ? fields[@"Package"] : @"";
-    NSString *version = [fields[@"Version"] isKindOfClass:NSString.class] ? fields[@"Version"] : @"";
-    NSString *architecture = [fields[@"Architecture"] isKindOfClass:NSString.class] ? fields[@"Architecture"] : @"";
-    NSString *priority = [fields[@"Priority"] isKindOfClass:NSString.class] ? [fields[@"Priority"] lowercaseString] : @"";
-    NSString *essential = [fields[@"Essential"] isKindOfClass:NSString.class] ? [fields[@"Essential"] lowercaseString] : @"no";
-    if (!ATMBackupPackageIDIsValid(packageID) || !version.length || ![@[@"iphoneos-arm64", @"all"] containsObject:architecture] || [essential isEqualToString:@"yes"] || [@[@"required", @"important"] containsObject:priority] || [ATMProtectedPackageIDs() containsObject:packageID.lowercaseString]) return nil;
-    NSString *sha = ATMSHA256ForFile(url, nil).lowercaseString; if (sha.length != 64) return nil;
+    if (!url.isFileURL || ![NSFileManager.defaultManager isReadableFileAtPath:url.path] || size.unsignedLongLongValue == 0 || size.unsignedLongLongValue > 256ULL * 1024ULL * 1024ULL) { if (failureStage) *failureStage = @"identity-file"; return nil; }
+    NSString *packageID = ATMReadDPKGDebField(environment, url, @"Package", failureStage);
+    if (!packageID || !ATMBackupPackageIDIsValid(packageID)) { if (failureStage && !*failureStage) *failureStage = @"identity-package"; return nil; }
+    NSString *version = ATMReadDPKGDebField(environment, url, @"Version", failureStage);
+    if (!version || !ATMBackupVersionIsValid(version)) { if (failureStage && !*failureStage) *failureStage = @"identity-version"; return nil; }
+    NSString *architecture = ATMReadDPKGDebField(environment, url, @"Architecture", failureStage);
+    if (!architecture || ![@[@"iphoneos-arm64", @"all"] containsObject:architecture]) { if (failureStage && !*failureStage) *failureStage = @"identity-architecture"; return nil; }
+    NSString *priority = [ATMReadDPKGDebField(environment, url, @"Priority", failureStage) lowercaseString];
+    if (!priority) return nil;
+    NSString *essential = [ATMReadDPKGDebField(environment, url, @"Essential", failureStage) lowercaseString];
+    if (!essential) return nil;
+    if ([essential isEqualToString:@"yes"] || [@[@"required", @"important"] containsObject:priority] || [ATMProtectedPackageIDs() containsObject:packageID.lowercaseString]) { if (failureStage) *failureStage = @"identity-policy"; return nil; }
+    NSString *sha = ATMSHA256ForFile(url, nil).lowercaseString; if (sha.length != 64) { if (failureStage) *failureStage = @"identity-hash"; return nil; }
     return @{ @"url": url, @"packageID": packageID, @"version": version, @"architecture": architecture, @"sha256": sha, @"size": size ?: @0 };
+}
+
+static NSDictionary *ATMValidatedBackupPayload(ATMEnvironment *environment, NSURL *url) {
+    return ATMValidatedBackupPayloadWithFailure(environment, url, nil);
 }
 
 static NSString *ATMSHA256ForData(NSData *data) { unsigned char digest[CC_SHA256_DIGEST_LENGTH]; CC_SHA256(data.bytes, (CC_LONG)data.length, digest); NSMutableString *value = [NSMutableString stringWithCapacity:64]; for (NSUInteger i = 0; i < CC_SHA256_DIGEST_LENGTH; i++) [value appendFormat:@"%02x", digest[i]]; return value; }
@@ -640,8 +657,12 @@ static NSData *ATMDecryptArchive(NSData *container, NSString *password, NSError 
     NSData *controlData = [@"Package: com.aaz.preflight\nVersion: 1\nArchitecture: iphoneos-arm64\nDescription: AAZ safe synthetic preflight\nMaintainer: AAZ\n" dataUsingEncoding:NSUTF8StringEncoding];
     if (passed && (![NSFileManager.defaultManager createDirectoryAtURL:debian withIntermediateDirectories:YES attributes:nil error:nil] || ![controlData writeToURL:controlURL options:NSDataWritingAtomic error:nil])) { passed = NO; failureStage = @"preflight-control"; }
     if (passed && [ATMRunBackupToolWithPrivilege(dpkgDeb, @[@"--build", stage.path, debURL.path], YES, nil)[@"exitCode"] integerValue] != 0) { passed = NO; failureStage = @"preflight-build"; }
-    NSDictionary *payload = passed ? ATMValidatedBackupPayload(self.environment, debURL) : nil;
-    if (passed && (![payload[@"packageID"] isEqualToString:@"com.aaz.preflight"] || ![payload[@"version"] isEqualToString:@"1"] || ![payload[@"architecture"] isEqualToString:@"iphoneos-arm64"])) { passed = NO; failureStage = @"preflight-identity"; }
+    NSString *identityFailure = nil;
+    NSDictionary *payload = passed ? ATMValidatedBackupPayloadWithFailure(self.environment, debURL, &identityFailure) : nil;
+    if (passed && !payload) { passed = NO; failureStage = [@"preflight-" stringByAppendingString:identityFailure ?: @"identity-unknown"]; }
+    if (passed && ![payload[@"packageID"] isEqualToString:@"com.aaz.preflight"]) { passed = NO; failureStage = @"preflight-identity-package"; }
+    if (passed && ![payload[@"version"] isEqualToString:@"1"]) { passed = NO; failureStage = @"preflight-identity-version"; }
+    if (passed && ![payload[@"architecture"] isEqualToString:@"iphoneos-arm64"]) { passed = NO; failureStage = @"preflight-identity-architecture"; }
     NSURL *reopen = [root URLByAppendingPathComponent:@"reopen" isDirectory:YES];
     if (passed && ![NSFileManager.defaultManager createDirectoryAtURL:reopen withIntermediateDirectories:NO attributes:@{NSFileProtectionKey: NSFileProtectionCompleteUntilFirstUserAuthentication} error:nil]) { passed = NO; failureStage = @"preflight-reopen-directory"; }
     if (passed && [ATMRunBackupToolWithPrivilege(dpkgDeb, @[@"--extract", debURL.path, reopen.path], YES, nil)[@"exitCode"] integerValue] != 0) { passed = NO; failureStage = @"preflight-reopen"; }
@@ -731,9 +752,13 @@ static NSData *ATMDecryptArchive(NSData *container, NSString *password, NSError 
     if (!controlsValid) { if (failureStage) *failureStage = @"control"; return nil; }
     NSURL *output = [root URLByAppendingPathComponent:@"repacked.deb"];
     NSDictionary *build = ATMRunBackupToolWithPrivilege(dpkgDeb, @[@"--build", stage.path, output.path], YES, nil);
-    NSDictionary *payload = [build[@"exitCode"] integerValue] == 0 ? ATMValidatedBackupPayload(self.environment, output) : nil;
-    BOOL matches = [payload[@"packageID"] isEqualToString:record.packageID] && [payload[@"version"] isEqualToString:record.version] && [payload[@"architecture"] isEqualToString:record.architecture];
-    if (!matches) { if (failureStage) *failureStage = [build[@"exitCode"] integerValue] == 0 ? @"identity" : @"build"; return nil; }
+    NSString *identityFailure = nil;
+    NSDictionary *payload = [build[@"exitCode"] integerValue] == 0 ? ATMValidatedBackupPayloadWithFailure(self.environment, output, &identityFailure) : nil;
+    if ([build[@"exitCode"] integerValue] != 0) { if (failureStage) *failureStage = @"build"; return nil; }
+    if (!payload) { if (failureStage) *failureStage = identityFailure ?: @"identity-unknown"; return nil; }
+    if (![payload[@"packageID"] isEqualToString:record.packageID]) { if (failureStage) *failureStage = @"identity-package"; return nil; }
+    if (![payload[@"version"] isEqualToString:record.version]) { if (failureStage) *failureStage = @"identity-version"; return nil; }
+    if (![payload[@"architecture"] isEqualToString:record.architecture]) { if (failureStage) *failureStage = @"identity-architecture"; return nil; }
     NSURL *reopen = [root URLByAppendingPathComponent:@"reopen" isDirectory:YES];
     if (![NSFileManager.defaultManager createDirectoryAtURL:reopen withIntermediateDirectories:NO attributes:@{NSFileProtectionKey: NSFileProtectionCompleteUntilFirstUserAuthentication} error:nil]) { if (failureStage) *failureStage = @"package-reopen-directory"; return nil; }
     NSDictionary *reopenResult = ATMRunBackupToolWithPrivilege(dpkgDeb, @[@"--extract", output.path, reopen.path], YES, nil);

@@ -133,6 +133,18 @@ static NSDictionary *ATMRestoreHeldPackages(ATMEnvironment *environment) {
     return @{ @"available": @YES, @"success": @YES, @"packages": held };
 }
 
+static NSString *ATMRestoreDPKGDebField(NSString *dpkgDeb, NSString *filePath, NSString *field) {
+    static NSSet<NSString *> *allowedFields; static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{ allowedFields = [NSSet setWithArray:@[@"Package", @"Version", @"Architecture", @"Priority", @"Essential"]]; });
+    if (!dpkgDeb.length || !filePath.length || ![allowedFields containsObject:field]) return nil;
+    NSDictionary *run = ATMRestoreRun(dpkgDeb, @[@"--field", filePath, field]);
+    if ([run[@"exitCode"] integerValue] != 0) return nil;
+    NSString *output = [run[@"output"] isKindOfClass:NSString.class] ? run[@"output"] : @"";
+    NSString *value = [output stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if ([value rangeOfCharacterFromSet:NSCharacterSet.newlineCharacterSet].location != NSNotFound || value.length > 512) return nil;
+    return value;
+}
+
 static NSDictionary *ATMRestoreVerifiedPayload(ATMEnvironment *environment, NSDictionary *descriptor, NSString *packageID, NSString *version) {
     NSURL *url = [descriptor[@"url"] isKindOfClass:NSURL.class] ? descriptor[@"url"] : nil;
     NSURL *root = [descriptor[@"stagingRoot"] isKindOfClass:NSURL.class] ? descriptor[@"stagingRoot"] : nil;
@@ -146,13 +158,12 @@ static NSDictionary *ATMRestoreVerifiedPayload(ATMEnvironment *environment, NSDi
         ![ATMSHA256ForFile(url, nil).lowercaseString isEqualToString:expectedHash]) return nil;
     NSString *dpkgDeb = ATMRestoreExecutable(environment, @[@"/usr/bin/dpkg-deb", @"/bin/dpkg-deb"]);
     if (!dpkgDeb.length) return nil;
-    NSDictionary *run = ATMRestoreRun(dpkgDeb, @[@"--field", filePath]);
-    NSDictionary *fields = [run[@"exitCode"] integerValue] == 0 ? ATMParseDebianParagraph(run[@"output"] ?: @"") : nil;
-    NSString *actualPackage = [fields[@"Package"] isKindOfClass:NSString.class] ? fields[@"Package"] : @"";
-    NSString *actualVersion = [fields[@"Version"] isKindOfClass:NSString.class] ? fields[@"Version"] : @"";
-    NSString *architecture = [fields[@"Architecture"] isKindOfClass:NSString.class] ? fields[@"Architecture"] : @"";
-    NSString *priority = [fields[@"Priority"] isKindOfClass:NSString.class] ? [fields[@"Priority"] lowercaseString] : @"";
-    NSString *essential = [fields[@"Essential"] isKindOfClass:NSString.class] ? [fields[@"Essential"] lowercaseString] : @"no";
+    NSString *actualPackage = ATMRestoreDPKGDebField(dpkgDeb, filePath, @"Package");
+    NSString *actualVersion = ATMRestoreDPKGDebField(dpkgDeb, filePath, @"Version");
+    NSString *architecture = ATMRestoreDPKGDebField(dpkgDeb, filePath, @"Architecture");
+    NSString *priority = [ATMRestoreDPKGDebField(dpkgDeb, filePath, @"Priority") lowercaseString];
+    NSString *essential = [ATMRestoreDPKGDebField(dpkgDeb, filePath, @"Essential") lowercaseString];
+    if (!actualPackage || !actualVersion || !architecture || !priority || !essential) return nil;
     if (![actualPackage isEqualToString:packageID] || ![actualVersion isEqualToString:version] ||
         (![@[@"iphoneos-arm64", @"all"] containsObject:architecture]) || [essential isEqualToString:@"yes"] ||
         [@[@"required", @"important"] containsObject:priority] || [ATMProtectedPackageIDs() containsObject:actualPackage.lowercaseString]) return nil;

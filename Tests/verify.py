@@ -27,7 +27,7 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "49"
+assert info["CFBundleVersion"] == "50"
 assert info["LSSupportsOpeningDocumentsInPlace"] is False
 assert "CFBundleDocumentTypes" not in info
 
@@ -47,7 +47,7 @@ assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["Ap
 with (ROOT / "Extension/Resources/Info.plist").open("rb") as handle:
     extension_info = plistlib.load(handle)
 assert extension_info["CFBundleIdentifier"] == "com.aaz.tweakmanager.importer"
-assert extension_info["CFBundleVersion"] == "49"
+assert extension_info["CFBundleVersion"] == "50"
 assert extension_info["CFBundlePackageType"] == "XPC!"
 extension_definition = extension_info["NSExtension"]
 assert extension_definition["NSExtensionPointIdentifier"] == "com.apple.share-services"
@@ -65,7 +65,7 @@ assert extension_entitlements == {
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta49" in control
+assert "Version: 0.1.0~beta50" in control
 assert "Priority: optional" in control
 assert "Depends: firmware (>= 15.0), coreutils, diffutils, dpkg, tar" in control
 
@@ -292,6 +292,18 @@ assert '@"Preparing file…"' in extension_text
 assert '@"Backup saved. Open AAZ Tweak Manager to verify and import it."' in extension_text
 assert '@"Package saved. Open AAZ Tweak Manager to verify it for Portable Backup."' in extension_text
 backup_manager_text = (ROOT / "Core/ATMBackupManager.m").read_text()
+assert "ATMRunDPKGDebField" not in backup_manager_text
+assert "ATMReadDPKGDebField" in backup_manager_text
+assert 'ATMRunBackupTool(tool, @[@"--field", debURL.path, field])' in backup_manager_text
+assert 'ATMValidatedBackupPayloadWithFailure' in backup_manager_text
+for identity_stage in (
+    "identity-file", "identity-tool", "identity-package", "identity-version",
+    "identity-architecture", "identity-policy", "identity-hash", "identity-unknown",
+):
+    assert identity_stage in all_text, f"missing detailed identity stage: {identity_stage}"
+assert "ATMRestoreDPKGDebField" in restore_planner_text
+assert 'ATMRestoreRun(dpkgDeb, @[@"--field", filePath, field])' in restore_planner_text
+assert 'ATMParseDebianParagraph(run[@"output"]' not in restore_planner_text
 for required_portable_guard in (
     'packageVaultDirectory', 'importPackagePayloadFromURL', 'ATMValidatedBackupPayload',
     '@"--download-only"', '@"--reinstall"', '@"APT::Get::AllowUnauthenticated=false"',
@@ -567,6 +579,21 @@ with tempfile.TemporaryDirectory() as temporary:
     )
     synthetic_deb = temporary_root / "preflight.deb"
     subprocess.run(["dpkg-deb", "--build", str(package_stage), str(synthetic_deb)], check=True, capture_output=True)
+    expected_identity = {
+        "Package": "com.aaz.preflight",
+        "Version": "1",
+        "Architecture": "all",
+        "Priority": "",
+        "Essential": "no",
+    }
+    for field, expected in expected_identity.items():
+        value = subprocess.run(
+            ["dpkg-deb", "--field", str(synthetic_deb), field],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        assert value == expected
     subprocess.run(
         ["dpkg", "--no-act", "--refuse-downgrade", "--install", str(synthetic_deb)],
         check=True,
