@@ -57,6 +57,9 @@ typedef NS_ENUM(NSInteger, ATMInstallDateConfidence) {
 FOUNDATION_EXPORT BOOL ATMImportDiagnosticsEnabled(void);
 FOUNDATION_EXPORT void ATMSetImportDiagnosticsEnabled(BOOL enabled);
 FOUNDATION_EXPORT void ATMClearImportDiagnosticTrace(void);
+FOUNDATION_EXPORT void ATMBeginImportDiagnosticAttempt(void);
+FOUNDATION_EXPORT void ATMPushImportDiagnosticSuppression(void);
+FOUNDATION_EXPORT void ATMPopImportDiagnosticSuppression(void);
 FOUNDATION_EXPORT void ATMRecordImportDiagnosticEvent(NSString *stage);
 FOUNDATION_EXPORT void ATMSetImportDiagnosticState(NSString *stage, NSInteger code);
 FOUNDATION_EXPORT void ATMSetRestoreDiagnosticState(NSString *code, NSInteger exitCode);

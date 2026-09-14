@@ -19,7 +19,7 @@ case "$phase" in
   metadata)
     test -f "$deb"
     test "$(dpkg-deb -f "$deb" Package)" = "com.aaz.tweakmanager"
-    test "$(dpkg-deb -f "$deb" Version)" = "0.1.0~beta50"
+    test "$(dpkg-deb -f "$deb" Version)" = "0.1.0~beta51"
     test "$(dpkg-deb -f "$deb" Architecture)" = "iphoneos-arm64"
     dpkg-deb -c "$deb" > "$package_list"
     ;;
@@ -65,10 +65,10 @@ assert extension_entitlements == {
     "application-identifier": "com.aaz.tweakmanager.importer",
     "com.apple.security.application-groups": ["group.com.aaz.tweakmanager"],
 }
-assert app_info["CFBundleVersion"] == "50"
+assert app_info["CFBundleVersion"] == "51"
 assert "CFBundleDocumentTypes" not in app_info
 assert extension_info["CFBundleIdentifier"] == "com.aaz.tweakmanager.importer"
-assert extension_info["CFBundleVersion"] == "50"
+assert extension_info["CFBundleVersion"] == "51"
 definition = extension_info["NSExtension"]
 assert definition["NSExtensionPointIdentifier"] == "com.apple.share-services"
 assert definition["NSExtensionPrincipalClass"] == "AAZShareViewController"
@@ -127,6 +127,14 @@ PY
     grep -Fq 'AAZTweakManagerRestore' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'Restore code:' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'restoreDiagnosticPrivacy=fixed-code-and-exit-only' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'importAttemptBuild=' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'importAttemptID=' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'importAttemptState=' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'archive-crc-failed' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'manifest-schema-failed' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'R40-SOURCE-PREFLIGHT' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'R40-SOURCE-OK' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'AAZ Tweak Manager Restore Report' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'Selection Profiles' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'Manage Profiles' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'Importing Backup' "$RUNNER_TEMP/aaz-app.strings"
@@ -153,7 +161,6 @@ PY
     grep -Fq 'missing-entry' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'symlink' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'package-reopen-directory' "$RUNNER_TEMP/aaz-app.strings"
-    grep -Fq 'archive-validation-failed' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'package-hash-failed' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'source-hash-failed' "$RUNNER_TEMP/aaz-app.strings"
     ;;

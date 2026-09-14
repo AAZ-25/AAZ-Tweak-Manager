@@ -315,19 +315,29 @@ static NSDictionary *ATMRestoreVerifiedPayload(ATMEnvironment *environment, NSDi
     }
     NSError *planError = nil;
     NSDictionary *currentPlan = [self planForManifest:manifest installedPackages:installed exactPayloads:exactPayloads error:&planError];
-    if (!currentPlan || ![currentPlan[@"safeToExecute"] boolValue]) {
+    NSUInteger approvedSourceActions = [expectedPlan[@"sourcesToRestore"] unsignedIntegerValue];
+    BOOL currentPackageSafetyPassed = currentPlan && [currentPlan[@"simulationPassed"] boolValue] && [currentPlan[@"blocked"] unsignedIntegerValue] == 0;
+    if (!currentPackageSafetyPassed || (![currentPlan[@"executionRequests"] count] && approvedSourceActions == 0)) {
         if (error) *error = planError ?: ATMRestorePlanError(74, @"The Restore plan no longer passes every safety check.");
         return nil;
     }
-    if (![currentPlan[@"executionSnapshot"] isEqual:expectedPlan[@"executionSnapshot"]]) {
+    NSDictionary *expectedPackageSnapshot = [expectedPlan[@"packageExecutionSnapshot"] isKindOfClass:NSDictionary.class] ? expectedPlan[@"packageExecutionSnapshot"] : expectedPlan[@"executionSnapshot"];
+    if (![currentPlan[@"executionSnapshot"] isEqual:expectedPackageSnapshot]) {
         if (error) *error = ATMRestorePlanError(75, @"The Restore plan changed after confirmation. Run the readiness check again.");
         return nil;
     }
     NSArray<NSString *> *requests = currentPlan[@"executionRequests"];
+    if (!requests.count) {
+        return @{ @"success": @YES, @"requested": @0, @"completed": @0, @"remaining": @0,
+                  @"aptExitCode": @(-1), @"restoreCode": @"R40-SOURCE-READY", @"postCheckPassed": @YES,
+                  @"removalsAllowed": @NO, @"downgradesAllowed": @NO, @"sourcesChanged": @NO,
+                  @"rollbackEvidence": @{ @"preRestoreRequestCount": @0, @"postRestoreRequestCount": @0, @"identitiesIncluded": @NO },
+                  @"reason": @"The package state already passed verification; only approved sanitized sources remain." };
+    }
     BOOL embeddedOnly = [currentPlan[@"executionSnapshot"][@"embeddedOnly"] boolValue];
     NSString *aptGet = ATMRestoreExecutable(self.environment, @[@"/usr/bin/apt-get", @"/bin/apt-get"]);
     NSString *dpkg = ATMRestoreExecutable(self.environment, @[@"/usr/bin/dpkg", @"/bin/dpkg"]);
-    if (!requests.count || (embeddedOnly ? !dpkg.length : !aptGet.length)) {
+    if (embeddedOnly ? !dpkg.length : !aptGet.length) {
         if (error) *error = ATMRestorePlanError(76, @"The approved package-manager action is unavailable.");
         return nil;
     }

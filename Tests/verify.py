@@ -7,6 +7,11 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+import zipfile
+import json
+import hashlib
+import struct
+import warnings
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -27,7 +32,7 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "50"
+assert info["CFBundleVersion"] == "51"
 assert info["LSSupportsOpeningDocumentsInPlace"] is False
 assert "CFBundleDocumentTypes" not in info
 
@@ -47,7 +52,7 @@ assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["Ap
 with (ROOT / "Extension/Resources/Info.plist").open("rb") as handle:
     extension_info = plistlib.load(handle)
 assert extension_info["CFBundleIdentifier"] == "com.aaz.tweakmanager.importer"
-assert extension_info["CFBundleVersion"] == "50"
+assert extension_info["CFBundleVersion"] == "51"
 assert extension_info["CFBundlePackageType"] == "XPC!"
 extension_definition = extension_info["NSExtension"]
 assert extension_definition["NSExtensionPointIdentifier"] == "com.apple.share-services"
@@ -65,7 +70,7 @@ assert extension_entitlements == {
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta50" in control
+assert "Version: 0.1.0~beta51" in control
 assert "Priority: optional" in control
 assert "Depends: firmware (>= 15.0), coreutils, diffutils, dpkg, tar" in control
 
@@ -394,7 +399,7 @@ assert 'ATMFilesEqualWithOptionalPrivilegedTool' in backup_manager_text
 assert 'ATMRunBackupToolWithPrivilege(dpkgDeb, @[@"--version"], YES, nil)' in backup_manager_text
 assert 'ATMRunBackupToolWithPrivilege(dpkg, @[@"--no-act", @"--refuse-downgrade", @"--install", debURL.path], YES, nil)' in backup_manager_text
 assert '@"preflight-restore-dry-run"' in all_text
-assert 'if (!requests.count || (embeddedOnly ? !dpkg.length : !aptGet.length))' in restore_planner_text
+assert 'if (embeddedOnly ? !dpkg.length : !aptGet.length)' in restore_planner_text
 assert '@"/usr/bin/true"' not in backup_manager_text
 assert 'cancelCurrentBackup' in all_text
 assert 'Share Privacy-Safe Report' in all_text
@@ -412,11 +417,70 @@ assert 'stage.URLByStandardizingPath.path' not in backup_manager_text
 assert '@"--no-recursion"' not in backup_manager_text
 assert 'packageHashFailureCount' in all_text
 assert 'sourceHashFailureCount' in all_text
-assert 'archive-validation-failed' in all_text
+assert 'archive-validation-failed' not in all_text
 assert 'package-hash-failed' in all_text
 assert 'source-hash-failed' in all_text
 assert 'Privacy-Safe Report' in all_text
 assert 'privacy=counts-and-fixed-stage-labels-only' in all_text
+
+# Beta 51 is one complete workflow correction, not a diagnostic-only release.
+for required_import_freshness in (
+    "ATMBeginImportDiagnosticAttempt", "ATMLastImportBuildV2", "ATMLastImportAttemptV2",
+    "ATMLastImportAttemptStateV2", "currentImportAttempt", 'importAttemptBuild=%@',
+    'importAttemptID=%@', 'importAttemptState=%@',
+):
+    assert required_import_freshness in all_text, f"missing current-attempt import diagnostic: {required_import_freshness}"
+assert 'ATMSetImportDiagnosticState(@"validation-failed"' not in all_text
+for detailed_import_stage in (
+    "archive-decryption-failed", "archive-layout-failed", "archive-crc-failed",
+    "archive-footer-failed", "archive-index-failed", "manifest-schema-failed",
+    "package-hash-failed", "source-hash-failed", "entry-integrity-failed",
+    "duplicate", "finalize-failed", "cancelled", "completed",
+):
+    assert detailed_import_stage in all_text, f"missing detailed import stage: {detailed_import_stage}"
+assert "ATMImportDiagnosticSuppressionDepth" in all_text
+assert "ATMPushImportDiagnosticSuppression" in backup_manager_text
+assert "ATMPopImportDiagnosticSuppression" in backup_manager_text
+assert "selfTestNonce" in backup_manager_text
+assert "selftest-encrypted.aaztmbackup" in backup_manager_text
+assert "incorrect-self-test-password" in backup_manager_text
+assert "wrongPasswordError.code != ATMBackupErrorWrongPassword" in backup_manager_text
+assert "[self stageImportFromURL:inboxProbe" in backup_manager_text
+assert "[self importBackupFromURL:stagedImport password:nil" in backup_manager_text
+assert "[self importBackupFromURL:encryptedStaged password:selfTestPassword" in backup_manager_text
+assert "if (!self.importSelfTestActive) [self.ledger recordEvent" in backup_manager_text
+assert "cleanupStaleImportArtifacts" in backup_manager_text
+assert 'hasSuffix:@".import.staged"' in backup_manager_text
+assert 'hasSuffix:@".partial"' in backup_manager_text
+
+for required_source_only_guard in (
+    "sourceRestoreReadiness", 'sourcePlan[@"pending"]', 'sourcePlan[@"snapshot"]',
+    'sessionPlan[@"packageExecutionSnapshot"]', '@"packages": plan[@"executionSnapshot"]',
+    '@"sources": sourcePlan[@"snapshot"]', 'sourcesPending > 0',
+    "currentPackageSafetyPassed", "approvedSourceActions", "if (!requests.count)",
+    '@"requested": @0', '@"remaining": @0', '@"R40-SOURCE-PREFLIGHT"',
+):
+    assert required_source_only_guard in all_text, f"missing source-only Restore guard: {required_source_only_guard}"
+source_preflight = backup_manager_text.index("NSDictionary *sourcePlan = [self sourceRestoreReadiness];", backup_manager_text.index("executeRestoreForManifest"))
+package_execution = backup_manager_text.index("[self.restorePlanner executeManifest", backup_manager_text.index("executeRestoreForManifest"))
+assert source_preflight < package_execution, "source destinations must be checked before package mutation"
+assert "sourcesStable" in backup_manager_text
+assert 'S_ISREG(status.st_mode)' in backup_manager_text
+assert '@[@"-d", destinationRoot]' in backup_manager_text
+assert '@[@"-w", destinationRoot]' in backup_manager_text
+assert 'packageActions == 0 ? @"no package changes"' in all_text
+assert "ATMWriteRestoreSummaryReport" in all_text
+assert all_text.count("Share Privacy-Safe Report") >= 4
+
+# The source-only gate must distinguish actual pending sources from a true no-op.
+def source_only_safe(simulation_passed, blocked, package_actions, source_states):
+    pending = sum(state == "pending" for state in source_states)
+    return simulation_passed and blocked == 0 and (package_actions > 0 or pending > 0)
+
+assert source_only_safe(True, 0, 0, ["pending", "present"])
+assert not source_only_safe(True, 0, 0, ["present", "present"])
+assert not source_only_safe(True, 1, 0, ["pending"])
+assert source_only_safe(True, 0, 1, [])
 
 with tempfile.TemporaryDirectory() as temporary:
     temporary_root = Path(temporary)
@@ -604,6 +668,66 @@ with tempfile.TemporaryDirectory() as temporary:
     assert (reopened / "usr/lib/aaz-preflight/probe").read_bytes() == executable.read_bytes()
     assert (reopened / "usr/lib/aaz-preflight/probe").stat().st_mode & 0o777 == 0o755
     assert os.readlink(reopened / "usr/lib/aaz-preflight/probe-link") == "probe"
+
+    # Stored-ZIP import regression matrix: success, truncation, CRC/content
+    # damage, malformed manifest, hash mismatch, and duplicate path.
+    import_zip = temporary_root / "import.aaztmbackup"
+    package_bytes = synthetic_deb.read_bytes()
+    package_hash = hashlib.sha256(package_bytes).hexdigest()
+    import_manifest = {
+        "format": "com.aaz.tweakmanager.backup", "formatVersion": 1,
+        "rootless": True, "architecture": "iphoneos-arm64",
+        "packages": [{"packageID": "com.aaz.preflight", "version": "1", "architecture": "all", "debStatus": "exact-cache", "debPath": "packages/preflight.deb", "sha256": package_hash}],
+        "sources": [], "portable": True, "payloadCoverage": 100,
+    }
+    with zipfile.ZipFile(import_zip, "w", compression=zipfile.ZIP_STORED) as archive_handle:
+        archive_handle.writestr("packages/preflight.deb", package_bytes)
+        archive_handle.writestr("manifest.json", json.dumps(import_manifest, sort_keys=True).encode())
+    with zipfile.ZipFile(import_zip) as archive_handle:
+        assert archive_handle.testzip() is None
+        assert json.loads(archive_handle.read("manifest.json"))["formatVersion"] == 1
+        assert hashlib.sha256(archive_handle.read("packages/preflight.deb")).hexdigest() == package_hash
+
+    truncated_zip = temporary_root / "truncated.aaztmbackup"
+    truncated_zip.write_bytes(import_zip.read_bytes()[:-11])
+    try:
+        zipfile.ZipFile(truncated_zip).testzip()
+        raise AssertionError("truncated archive unexpectedly validated")
+    except zipfile.BadZipFile:
+        pass
+
+    corrupted_zip = temporary_root / "crc.aaztmbackup"
+    corrupted = bytearray(import_zip.read_bytes())
+    name_length, extra_length = struct.unpack_from("<HH", corrupted, 26)
+    payload_offset = 30 + name_length + extra_length
+    corrupted[payload_offset] ^= 0x01
+    corrupted_zip.write_bytes(corrupted)
+    with zipfile.ZipFile(corrupted_zip) as archive_handle:
+        assert archive_handle.testzip() == "packages/preflight.deb"
+
+    malformed_zip = temporary_root / "malformed.aaztmbackup"
+    with zipfile.ZipFile(malformed_zip, "w", compression=zipfile.ZIP_STORED) as archive_handle:
+        archive_handle.writestr("manifest.json", b"not-json")
+    with zipfile.ZipFile(malformed_zip) as archive_handle:
+        try:
+            json.loads(archive_handle.read("manifest.json"))
+            raise AssertionError("malformed manifest unexpectedly parsed")
+        except json.JSONDecodeError:
+            pass
+
+    wrong_hash_manifest = dict(import_manifest)
+    wrong_hash_manifest["packages"] = [dict(import_manifest["packages"][0], sha256="0" * 64)]
+    assert wrong_hash_manifest["packages"][0]["sha256"] != hashlib.sha256(package_bytes).hexdigest()
+
+    duplicate_zip = temporary_root / "duplicate.aaztmbackup"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        with zipfile.ZipFile(duplicate_zip, "w", compression=zipfile.ZIP_STORED) as archive_handle:
+            archive_handle.writestr("manifest.json", b"{}")
+            archive_handle.writestr("manifest.json", b"{}")
+    with zipfile.ZipFile(duplicate_zip) as archive_handle:
+        names = archive_handle.namelist()
+        assert len(names) != len(set(names))
 assert 'Only a healthy backup can be imported' not in all_text
 assert "Already Imported" in all_text
 assert "NSFileCoordinator" in all_text

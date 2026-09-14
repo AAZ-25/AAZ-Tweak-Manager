@@ -317,6 +317,10 @@ static NSString *const ATMImportDiagnosticsEnabledKey = @"ATMImportDiagnosticsEn
 static NSString *const ATMImportTraceKey = @"ATMImportTraceV1";
 static NSString *const ATMLastImportStageKey = @"ATMLastImportStageV1";
 static NSString *const ATMLastImportErrorCodeKey = @"ATMLastImportErrorCodeV1";
+static NSString *const ATMLastImportBuildKey = @"ATMLastImportBuildV2";
+static NSString *const ATMLastImportAttemptKey = @"ATMLastImportAttemptV2";
+static NSString *const ATMLastImportAttemptStateKey = @"ATMLastImportAttemptStateV2";
+static NSInteger ATMImportDiagnosticSuppressionDepth = 0;
 static NSString *const ATMLastRestoreCodeKey = @"ATMLastRestoreCodeV1";
 static NSString *const ATMLastRestoreExitCodeKey = @"ATMLastRestoreExitCodeV1";
 
@@ -326,7 +330,7 @@ static BOOL ATMRestoreDiagnosticCodeAllowed(NSString *code) {
         allowedCodes = [NSSet setWithArray:@[
             @"R40-READINESS", @"R40-READY", @"R40-BLOCKED", @"R40-STARTED", @"R40-OK", @"R40-PRECHECK", @"R40-APT-PREFLIGHT",
             @"R40-PERSONA", @"R40-SPAWN", @"R40-SIGNAL", @"R40-LOCK", @"R40-PRIVILEGE", @"R40-STORAGE", @"R40-DPKG", @"R40-DPKG-PREFLIGHT", @"R40-PARTIAL",
-            @"R40-DEPENDENCY", @"R40-ARCHIVE", @"R40-AUTH", @"R40-SOURCE-AUTH", @"R40-SOURCE-RESTORE", @"R40-NETWORK", @"R40-APT", @"R40-POSTSCAN", @"R40-VERIFY", @"R40-UNKNOWN"
+            @"R40-DEPENDENCY", @"R40-ARCHIVE", @"R40-AUTH", @"R40-SOURCE-AUTH", @"R40-SOURCE-PREFLIGHT", @"R40-SOURCE-READY", @"R40-SOURCE-OK", @"R40-SOURCE-RESTORE", @"R40-NETWORK", @"R40-APT", @"R40-POSTSCAN", @"R40-VERIFY", @"R40-UNKNOWN"
         ]];
     });
     return [code isKindOfClass:NSString.class] && [allowedCodes containsObject:code];
@@ -342,22 +346,15 @@ static BOOL ATMImportDiagnosticStageAllowed(NSString *stage) {
     static NSSet<NSString *> *allowedStages; static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         allowedStages = [NSSet setWithArray:@[
-            @"picker-requested", @"picker-presentation-blocked", @"picker-create-failed",
-            @"container-ready", @"container-unavailable",
-            @"local-browser-opened", @"local-scan-started", @"local-scan-completed", @"local-scan-empty", @"local-file-selected",
-            @"picker-host-identity-corrected", @"picker-host-identity-unavailable",
-            @"picker-legacy-created", @"picker-open-mode-created", @"picker-copy-mode-created", @"picker-delegate-attached",
-            @"picker-explicit-open-required", @"picker-presentation-started",
-            @"picker-opened", @"picker-callback-multiple", @"picker-callback-single",
-            @"no-selection", @"file-selected", @"selection-count-invalid", @"security-scope-granted",
-            @"security-scope-not-required", @"picker-cancel-delegate", @"picker-cancel-dismissal",
-            @"document-open-started", @"document-content-received", @"document-content-invalid", @"document-write-failed", @"document-open-failed",
-            @"open-in-received", @"share-extension-received", @"copying", @"copy-direct-started", @"copy-direct-failed",
+            @"share-extension-received", @"security-scope-granted", @"security-scope-not-required",
+            @"copying", @"copy-direct-started", @"copy-direct-failed",
             @"coordination-fallback-started", @"coordination-accessor-called", @"invalid-selection", @"destination-unavailable",
-            @"copy-coordinating", @"source-read-failed", @"destination-write-failed",
+            @"source-read-failed", @"destination-write-failed",
             @"coordination-failed", @"empty-file", @"staged", @"validating", @"duplicate",
-            @"validation-failed", @"archive-validation-failed", @"package-hash-failed",
-            @"source-hash-failed", @"entry-integrity-failed", @"finalize-failed", @"completed"
+            @"archive-decryption-failed",
+            @"archive-layout-failed", @"archive-crc-failed", @"archive-footer-failed", @"archive-index-failed", @"manifest-schema-failed",
+            @"package-hash-failed",
+            @"source-hash-failed", @"entry-integrity-failed", @"finalize-failed", @"cancelled", @"completed"
         ]];
     });
     return [stage isKindOfClass:NSString.class] && [allowedStages containsObject:stage];
@@ -369,6 +366,27 @@ BOOL ATMImportDiagnosticsEnabled(void) {
 
 void ATMClearImportDiagnosticTrace(void) {
     [NSUserDefaults.standardUserDefaults removeObjectForKey:ATMImportTraceKey];
+    [NSUserDefaults.standardUserDefaults removeObjectForKey:ATMLastImportStageKey];
+    [NSUserDefaults.standardUserDefaults removeObjectForKey:ATMLastImportErrorCodeKey];
+    [NSUserDefaults.standardUserDefaults removeObjectForKey:ATMLastImportBuildKey];
+    [NSUserDefaults.standardUserDefaults removeObjectForKey:ATMLastImportAttemptKey];
+    [NSUserDefaults.standardUserDefaults removeObjectForKey:ATMLastImportAttemptStateKey];
+}
+
+void ATMBeginImportDiagnosticAttempt(void) {
+    ATMClearImportDiagnosticTrace();
+    NSString *identifier = [[NSUUID.UUID.UUIDString stringByReplacingOccurrencesOfString:@"-" withString:@""] substringToIndex:8];
+    [NSUserDefaults.standardUserDefaults setObject:[NSString stringWithFormat:@"I-%@", identifier] forKey:ATMLastImportAttemptKey];
+    [NSUserDefaults.standardUserDefaults setObject:NSBundle.mainBundle.infoDictionary[@"CFBundleVersion"] ?: @"unknown" forKey:ATMLastImportBuildKey];
+    [NSUserDefaults.standardUserDefaults setObject:@"in-progress" forKey:ATMLastImportAttemptStateKey];
+}
+
+void ATMPushImportDiagnosticSuppression(void) {
+    @synchronized (NSUserDefaults.standardUserDefaults) { ATMImportDiagnosticSuppressionDepth++; }
+}
+
+void ATMPopImportDiagnosticSuppression(void) {
+    @synchronized (NSUserDefaults.standardUserDefaults) { if (ATMImportDiagnosticSuppressionDepth > 0) ATMImportDiagnosticSuppressionDepth--; }
 }
 
 void ATMSetImportDiagnosticsEnabled(BOOL enabled) {
@@ -377,6 +395,7 @@ void ATMSetImportDiagnosticsEnabled(BOOL enabled) {
 }
 
 void ATMRecordImportDiagnosticEvent(NSString *stage) {
+    if (ATMImportDiagnosticSuppressionDepth > 0) return;
     if (!ATMImportDiagnosticsEnabled() || !ATMImportDiagnosticStageAllowed(stage)) return;
     NSArray *existing = [NSUserDefaults.standardUserDefaults arrayForKey:ATMImportTraceKey] ?: @[];
     NSMutableArray<NSString *> *trace = [NSMutableArray array];
@@ -387,9 +406,13 @@ void ATMRecordImportDiagnosticEvent(NSString *stage) {
 }
 
 void ATMSetImportDiagnosticState(NSString *stage, NSInteger code) {
+    if (ATMImportDiagnosticSuppressionDepth > 0) return;
     if (!ATMImportDiagnosticStageAllowed(stage)) return;
+    if (![NSUserDefaults.standardUserDefaults stringForKey:ATMLastImportAttemptKey]) ATMBeginImportDiagnosticAttempt();
     [NSUserDefaults.standardUserDefaults setObject:stage forKey:ATMLastImportStageKey];
     [NSUserDefaults.standardUserDefaults setInteger:code forKey:ATMLastImportErrorCodeKey];
+    BOOL terminal = [stage isEqualToString:@"completed"] || code != 0;
+    [NSUserDefaults.standardUserDefaults setObject:terminal ? ([stage isEqualToString:@"completed"] ? @"completed" : @"failed") : @"in-progress" forKey:ATMLastImportAttemptStateKey];
     ATMRecordImportDiagnosticEvent(stage);
 }
 
@@ -417,13 +440,16 @@ NSURL *ATMWriteDiagnosticReport(ATMEnvironment *environment,
     else if ([environment.dpkgStatusPath hasSuffix:@"/var/lib/dpkg/status"]) databaseKind = @"var-lib-dpkg";
     NSFileManager *fm = NSFileManager.defaultManager;
     NSDictionary *info = NSBundle.mainBundle.infoDictionary;
+    NSString *currentBuild = info[@"CFBundleVersion"] ?: @"unknown";
+    NSString *storedImportBuild = [NSUserDefaults.standardUserDefaults stringForKey:ATMLastImportBuildKey];
+    BOOL currentImportAttempt = storedImportBuild.length && [storedImportBuild isEqualToString:currentBuild];
     NSString *storedRestoreCode = [NSUserDefaults.standardUserDefaults stringForKey:ATMLastRestoreCodeKey];
     BOOL currentRestoreCode = [storedRestoreCode hasPrefix:@"R40-"];
     NSMutableArray<NSString *> *lines = [@[
         @"AAZ Tweak Manager Diagnostic",
         @"format=1",
         [NSString stringWithFormat:@"appVersion=%@", info[@"CFBundleShortVersionString"] ?: @"unknown"],
-        [NSString stringWithFormat:@"appBuild=%@", info[@"CFBundleVersion"] ?: @"unknown"],
+        [NSString stringWithFormat:@"appBuild=%@", currentBuild],
         [NSString stringWithFormat:@"rootlessDetected=%@", environment.supportedRootless ? @"yes" : @"no"],
         [NSString stringWithFormat:@"statusDatabase=%@", databaseKind],
         [NSString stringWithFormat:@"statusReadable=%@", [fm isReadableFileAtPath:environment.dpkgStatusPath] ? @"yes" : @"no"],
@@ -437,8 +463,11 @@ NSURL *ATMWriteDiagnosticReport(ATMEnvironment *environment,
         [NSString stringWithFormat:@"excludedProtected=%lu", (unsigned long)protectedPackage],
         [NSString stringWithFormat:@"excludedOther=%lu", (unsigned long)otherExcluded],
         [NSString stringWithFormat:@"selected=%lu", (unsigned long)selectedPackageIDs.count],
-        [NSString stringWithFormat:@"importStage=%@", [NSUserDefaults.standardUserDefaults stringForKey:@"ATMLastImportStageV1"] ?: @"not-run"],
-        [NSString stringWithFormat:@"importErrorCode=%ld", (long)[NSUserDefaults.standardUserDefaults integerForKey:@"ATMLastImportErrorCodeV1"]],
+        [NSString stringWithFormat:@"importAttemptBuild=%@", currentImportAttempt ? storedImportBuild : @"not-run"],
+        [NSString stringWithFormat:@"importAttemptID=%@", currentImportAttempt ? ([NSUserDefaults.standardUserDefaults stringForKey:ATMLastImportAttemptKey] ?: @"not-run") : @"not-run"],
+        [NSString stringWithFormat:@"importAttemptState=%@", currentImportAttempt ? ([NSUserDefaults.standardUserDefaults stringForKey:ATMLastImportAttemptStateKey] ?: @"not-run") : @"not-run"],
+        [NSString stringWithFormat:@"importStage=%@", currentImportAttempt ? ([NSUserDefaults.standardUserDefaults stringForKey:ATMLastImportStageKey] ?: @"not-run") : @"not-run"],
+        [NSString stringWithFormat:@"importErrorCode=%ld", (long)(currentImportAttempt ? [NSUserDefaults.standardUserDefaults integerForKey:ATMLastImportErrorCodeKey] : 0)],
         [NSString stringWithFormat:@"restoreCode=%@", currentRestoreCode ? storedRestoreCode : @"not-run"],
         [NSString stringWithFormat:@"restoreExitCode=%ld", (long)(currentRestoreCode ? [NSUserDefaults.standardUserDefaults integerForKey:ATMLastRestoreExitCodeKey] : -1)],
         @"restoreDiagnosticPrivacy=fixed-code-and-exit-only",
@@ -447,7 +476,7 @@ NSURL *ATMWriteDiagnosticReport(ATMEnvironment *environment,
     BOOL importDebugEnabled = ATMImportDiagnosticsEnabled();
     [lines addObject:[NSString stringWithFormat:@"importDebugEnabled=%@", importDebugEnabled ? @"yes" : @"no"]];
     if (importDebugEnabled) {
-        NSArray *storedTrace = [NSUserDefaults.standardUserDefaults arrayForKey:ATMImportTraceKey] ?: @[];
+        NSArray *storedTrace = currentImportAttempt ? ([NSUserDefaults.standardUserDefaults arrayForKey:ATMImportTraceKey] ?: @[]) : @[];
         NSMutableArray<NSString *> *safeTrace = [NSMutableArray array];
         for (id item in storedTrace) if ([item isKindOfClass:NSString.class] && ATMImportDiagnosticStageAllowed(item)) [safeTrace addObject:item];
         [lines addObject:@"importTraceFormat=1"];

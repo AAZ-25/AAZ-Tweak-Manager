@@ -178,7 +178,10 @@ NSArray<NSDictionary *> *ATMValidateStoredZipArchive(NSURL *archiveURL, NSError 
         if (!name.length || [name hasPrefix:@"/"] || [name containsString:@".."] || [paths containsObject:name]) break;
         uLong actualCRC = crc32(0L, Z_NULL, 0);
         actualCRC = crc32(actualCRC, bytes + dataOffset, (uInt)size);
-        if ((uint32_t)actualCRC != expectedCRC) break;
+        if ((uint32_t)actualCRC != expectedCRC) {
+            if (error) *error = [NSError errorWithDomain:ATMZipErrorDomain code:13 userInfo:@{NSLocalizedDescriptionKey: @"The backup archive entry checksum is invalid."}];
+            return nil;
+        }
         [paths addObject:name];
         [entries addObject:@{ @"path": name, @"size": @(size), @"crc32": @(expectedCRC), @"offset": @(offset) }];
         offset = dataOffset + size;

@@ -73,6 +73,32 @@ static void ATMShowError(UIViewController *controller, NSString *title, NSError 
     [controller presentViewController:alert animated:YES completion:nil];
 }
 
+static void ATMShowErrorWithReport(UIViewController *controller, NSString *title, NSError *error, NSURL *reportURL) {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:title message:error.localizedDescription ?: @"Unknown error" preferredStyle:UIAlertControllerStyleAlert];
+    if (reportURL) [alert addAction:[UIAlertAction actionWithTitle:@"Share Privacy-Safe Report" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
+        UIActivityViewController *activity = [[UIActivityViewController alloc] initWithActivityItems:@[reportURL] applicationActivities:nil];
+        activity.popoverPresentationController.sourceView = controller.view; activity.popoverPresentationController.sourceRect = controller.view.bounds;
+        [controller presentViewController:activity animated:YES completion:nil];
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleCancel handler:nil]];
+    [controller presentViewController:alert animated:YES completion:nil];
+}
+
+static NSURL *ATMWriteRestoreSummaryReport(NSDictionary *plan, NSDictionary *result, NSError *failure) {
+    NSDictionary *info = NSBundle.mainBundle.infoDictionary;
+    NSNumber *managerExit = result[@"aptExitCode"] ?: @(-1); id managerExitText = managerExit.integerValue < 0 ? @"not-run" : managerExit;
+    NSString *text = [NSString stringWithFormat:
+        @"AAZ Tweak Manager Restore Report\nformat=1\nappVersion=%@\nappBuild=%@\nstage=%@\nsuccess=%@\nerrorCode=%ld\nrestoreCode=%@\npackageManagerExit=%@\nrequested=%@\ncompleted=%@\nremaining=%@\nsourcesPending=%@\nsourcesRestored=%@\nprivateSourcesSkipped=%@\nblocked=%@\nprotectedOrInvalid=%@\nheld=%@\nmetadataUnavailable=%@\nunexpectedActions=%@\nprivacy=counts-and-fixed-stage-labels-only\n",
+        info[@"CFBundleShortVersionString"] ?: @"unknown", info[@"CFBundleVersion"] ?: @"unknown",
+        result ? @"execution" : @"readiness", result ? ([result[@"success"] boolValue] ? @"yes" : @"no") : @"no",
+        (long)(failure ? failure.code : 0), result[@"restoreCode"] ?: @"not-run", managerExitText,
+        result[@"requested"] ?: @0, result[@"completed"] ?: @0, result[@"remaining"] ?: @0,
+        plan[@"sourcesToRestore"] ?: @0, result[@"sourcesRestored"] ?: @0, result[@"privateSourcesSkipped"] ?: plan[@"privateSourcesSkipped"] ?: @0,
+        plan[@"blocked"] ?: @0, plan[@"protectedOrInvalid"] ?: @0, plan[@"held"] ?: @0, plan[@"metadataUnavailable"] ?: @0, plan[@"unexpectedActions"] ?: @0];
+    NSURL *url = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:@"AAZ-Restore-Report.txt"]];
+    return [text writeToURL:url atomically:YES encoding:NSUTF8StringEncoding error:nil] ? url : nil;
+}
+
 static NSArray<NSString *> *ATMBackupCaptureStageKeys(void) {
     NSMutableArray<NSString *> *keys = [@[@"preflight", @"preflight-warning", @"preflight-workspace", @"preflight-tools", @"preflight-persona", @"preflight-staging", @"preflight-direct-copy-tools", @"preflight-direct-copy", @"preflight-direct-directory-containment", @"preflight-direct-directory-create", @"preflight-fallback-staging", @"preflight-fallback-create", @"preflight-fallback-extract", @"preflight-fallback-verify", @"preflight-control", @"preflight-build", @"preflight-identity", @"preflight-identity-file", @"preflight-identity-tool", @"preflight-identity-package", @"preflight-identity-version", @"preflight-identity-architecture", @"preflight-identity-policy", @"preflight-identity-hash", @"preflight-identity-unknown", @"preflight-reopen-directory", @"preflight-reopen", @"preflight-payload-verify", @"preflight-restore-dry-run", @"preflight-archive", @"preflight-archive-verify", @"preflight-share-inbox", @"preflight-import", @"preflight-unknown", @"inventory", @"payload", @"privacy", @"verification", @"tools", @"workspace", @"staging", @"directory-containment", @"directory-create", @"directory-staging", @"archive", @"archive-create", @"archive-extract", @"direct-copy-tools", @"direct-copy", @"direct-copy-verify", @"archive-fallback-create", @"archive-fallback-extract", @"archive-fallback-verify", @"control", @"build", @"identity", @"identity-file", @"identity-tool", @"identity-package", @"identity-version", @"identity-architecture", @"identity-policy", @"identity-hash", @"identity-unknown", @"package-reopen-directory", @"package-reopen", @"package-payload-verify", @"cancelled", @"unknown"] mutableCopy];
     NSArray<NSString *> *verificationPrefixes = @[@"preflight-direct-copy-verify", @"preflight-fallback-verify", @"preflight-payload-verify", @"direct-copy-verify", @"archive-fallback-verify", @"package-payload-verify"];
@@ -405,6 +431,7 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
 @property(nonatomic, copy) NSArray<NSDictionary *> *sections;
 @property(nonatomic, copy, nullable) dispatch_block_t restoreHandler;
 @property(nonatomic, copy, nullable) dispatch_block_t cancelHandler;
+@property(nonatomic, copy, nullable) dispatch_block_t shareReportHandler;
 - (instancetype)initWithPlan:(NSDictionary *)plan;
 @end
 
@@ -422,6 +449,7 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
     self.title = passed ? @"Plan Ready" : @"Needs Attention";
     self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(closeReadiness)];
     if ([self.plan[@"safeToExecute"] boolValue]) self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"Restore" style:UIBarButtonItemStyleDone target:self action:@selector(requestRestore)];
+    else self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"Report" style:UIBarButtonItemStylePlain target:self action:@selector(shareReadinessReport)];
     UIColor *good = UIColor.systemGreenColor, *warning = UIColor.systemOrangeColor, *neutral = UIColor.systemBlueColor;
     self.sections = @[
         @{ @"title": @"BACKUP", @"items": @[
@@ -460,6 +488,7 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
 }
 - (void)closeReadiness { dispatch_block_t handler = self.cancelHandler; [self dismissViewControllerAnimated:YES completion:handler]; }
 - (void)requestRestore { if ([self.plan[@"safeToExecute"] boolValue] && self.restoreHandler) self.restoreHandler(); }
+- (void)shareReadinessReport { if (self.shareReportHandler) self.shareReportHandler(); }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { (void)tableView; return self.sections.count; }
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { (void)tableView; return [self.sections[section][@"items"] count]; }
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section { (void)tableView; return self.sections[section][@"title"]; }
@@ -672,11 +701,12 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
         NSDictionary *plan = [ATMAppModel.shared.backupManager restoreReadinessForBackupURL:backupURL password:password installedPackages:ATMAppModel.shared.packages error:&error];
         dispatch_async(dispatch_get_main_queue(), ^{
             [progress dismissViewControllerAnimated:YES completion:^{
-                if (!plan) { ATMShowError(self, @"Restore plan unavailable", error); return; }
+                if (!plan) { ATMShowErrorWithReport(self, @"Restore plan unavailable", error, ATMWriteRestoreSummaryReport(nil, nil, error)); return; }
                 ATMRestoreReadinessController *result = [[ATMRestoreReadinessController alloc] initWithPlan:plan];
                 __weak typeof(self) weakSelf = self; __weak ATMRestoreReadinessController *weakResult = result;
                 result.restoreHandler = ^{ [weakResult dismissViewControllerAnimated:YES completion:^{ [weakSelf confirmRestoreManifest:manifest plan:plan]; }]; };
                 result.cancelHandler = ^{ [ATMAppModel.shared.backupManager discardRestoreSession]; };
+                result.shareReportHandler = ^{ NSURL *report = ATMWriteRestoreSummaryReport(plan, nil, nil); if (report) [weakResult dismissViewControllerAnimated:YES completion:^{ [weakSelf shareURL:report]; }]; };
                 UINavigationController *navigation = [[UINavigationController alloc] initWithRootViewController:result];
                 navigation.modalPresentationStyle = UIModalPresentationFormSheet;
                 [self presentViewController:navigation animated:YES completion:nil];
@@ -686,8 +716,9 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
 }
 - (void)confirmRestoreManifest:(NSDictionary *)manifest plan:(NSDictionary *)plan {
     if (![plan[@"safeToExecute"] boolValue]) return;
-    NSString *mode = [plan[@"embeddedRequests"] unsignedIntegerValue] == [plan[@"executionRequests"] count] ? @"verified DEBs embedded in this backup" : @"authenticated repositories";
-    NSString *message = [NSString stringWithFormat:@"Install %@ approved package action(s) using %@, then restore %@ sanitized public source file(s)?\n\nThe plan will be rechecked immediately. Restore stops on drift, removal, downgrade, holds, protected packages, unexpected dependencies, or unsafe source data. Private repository credentials are never restored.", [plan[@"executionRequests"] count] ? @([plan[@"executionRequests"] count]) : @0, mode, plan[@"sourcesToRestore"] ?: @0];
+    NSUInteger packageActions = [plan[@"executionRequests"] count];
+    NSString *mode = packageActions == 0 ? @"no package changes" : ([plan[@"embeddedRequests"] unsignedIntegerValue] == packageActions ? @"verified DEBs embedded in this backup" : @"authenticated repositories");
+    NSString *message = [NSString stringWithFormat:@"Run %@ approved package action(s) using %@, then restore %@ sanitized public source file(s)?\n\nThe plan will be rechecked immediately. Restore stops on drift, removal, downgrade, holds, protected packages, unexpected dependencies, or unsafe source data. Private repository credentials are never restored.", @(packageActions), mode, plan[@"sourcesToRestore"] ?: @0];
     UIAlertController *confirmation = [UIAlertController alertControllerWithTitle:@"Final Restore Confirmation" message:message preferredStyle:UIAlertControllerStyleAlert];
     [confirmation addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(__unused UIAlertAction *action) { [ATMAppModel.shared.backupManager discardRestoreSession]; }]];
     __weak typeof(self) weakSelf = self;
@@ -699,10 +730,12 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
             NSDictionary *result = [ATMAppModel.shared.backupManager executeRestoreForManifest:manifest expectedPlan:plan error:&error];
             dispatch_async(dispatch_get_main_queue(), ^{
                 [progress dismissViewControllerAnimated:YES completion:^{
-                    if (!result) { ATMShowError(weakSelf, @"Restore did not start", error); return; }
+                    if (!result) { ATMShowErrorWithReport(weakSelf, @"Restore did not start", error, ATMWriteRestoreSummaryReport(plan, nil, error)); return; }
                     BOOL success = [result[@"success"] boolValue];
-                    NSString *detail = [NSString stringWithFormat:@"%@\n\nRestore code: %@\nPackage-manager exit: %@\nRequested: %@\nCompleted: %@\nRemaining: %@\nFinal verification: %@\nPackages removed: 0\nSources restored: %@\nPrivate sources skipped: %@", result[@"reason"] ?: @"Restore stopped.", result[@"restoreCode"] ?: @"R40-UNKNOWN", result[@"aptExitCode"] ?: @(-1), result[@"requested"] ?: @0, result[@"completed"] ?: @0, result[@"remaining"] ?: @0, [result[@"postCheckPassed"] boolValue] ? @"Passed" : @"Not passed", result[@"sourcesRestored"] ?: @0, result[@"privateSourcesSkipped"] ?: plan[@"privateSourcesSkipped"] ?: @0];
+                    NSNumber *managerExit = result[@"aptExitCode"] ?: @(-1); id managerExitText = managerExit.integerValue < 0 ? @"Not run" : managerExit;
+                    NSString *detail = [NSString stringWithFormat:@"%@\n\nRestore code: %@\nPackage-manager exit: %@\nRequested: %@\nCompleted: %@\nRemaining: %@\nFinal verification: %@\nPackages removed: 0\nSources restored: %@\nPrivate sources skipped: %@", result[@"reason"] ?: @"Restore stopped.", result[@"restoreCode"] ?: @"R40-UNKNOWN", managerExitText, result[@"requested"] ?: @0, result[@"completed"] ?: @0, result[@"remaining"] ?: @0, [result[@"postCheckPassed"] boolValue] ? @"Passed" : @"Not passed", result[@"sourcesRestored"] ?: @0, result[@"privateSourcesSkipped"] ?: plan[@"privateSourcesSkipped"] ?: @0];
                     UIAlertController *summary = [UIAlertController alertControllerWithTitle:success ? @"Restore Completed" : @"Restore Needs Attention" message:detail preferredStyle:UIAlertControllerStyleAlert];
+                    if (!success) { NSURL *reportURL = ATMWriteRestoreSummaryReport(plan, result, error); if (reportURL) [summary addAction:[UIAlertAction actionWithTitle:@"Share Privacy-Safe Report" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) { [weakSelf shareURL:reportURL]; }]]; }
                     [summary addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleDefault handler:nil]];
                     [weakSelf presentViewController:summary animated:YES completion:nil];
                 }];
@@ -723,7 +756,7 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
     if (!url) return;
     self.processingPendingImport = YES;
     if ([ATMAppModel.shared.backupManager isPendingPackagePayloadURL:url]) { [self beginPackagePayloadImportFromURL:url]; return; }
-    ATMClearImportDiagnosticTrace();
+    ATMBeginImportDiagnosticAttempt();
     ATMSetImportDiagnosticState(@"share-extension-received", 0);
     [self beginImportFromURL:url];
 }
@@ -756,7 +789,7 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
         dispatch_async(dispatch_get_main_queue(), ^{
             [progress dismissViewControllerAnimated:YES completion:^{
                 self.processingPendingImport = NO;
-                if (!staged) { ATMShowError(self, @"Import could not start", error); return; }
+                if (!staged) { NSError *reportError = nil; NSURL *report = ATMWriteDiagnosticReport(ATMAppModel.shared.environment, ATMAppModel.shared.packages, ATMAppModel.shared.ledger.selectedPackageIDs, ATMAppModel.shared.scanError, &reportError); ATMShowErrorWithReport(self, @"Import could not start", error, report); return; }
                 self.pendingImportURL = staged;
                 if ([ATMAppModel.shared.backupManager isEncryptedBackup:staged]) [self promptForImportPasswordForURL:staged];
                 else [self performImport:staged password:nil];
@@ -767,11 +800,11 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
 - (void)promptForImportPasswordForURL:(NSURL *)url {
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Import Encrypted Backup" message:@"The password is used only for this import and is never stored." preferredStyle:UIAlertControllerStyleAlert];
     [alert addTextFieldWithConfigurationHandler:^(UITextField *field) { field.placeholder = @"Password"; field.secureTextEntry = YES; }];
-    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(__unused UIAlertAction *action) { [ATMAppModel.shared.backupManager discardStagedImportAtURL:url]; self.pendingImportURL = nil; }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(__unused UIAlertAction *action) { ATMSetImportDiagnosticState(@"cancelled", 66); [ATMAppModel.shared.backupManager discardStagedImportAtURL:url]; self.pendingImportURL = nil; }]];
     [alert addAction:[UIAlertAction actionWithTitle:@"Continue" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) { [self performImport:url password:alert.textFields.firstObject.text ?: @""]; }]];
     [self presentViewController:alert animated:YES completion:nil];
 }
-- (void)performImport:(NSURL *)url password:(NSString *)password { UIAlertController *progress = [UIAlertController alertControllerWithTitle:@"Inspecting Import" message:@"Checking format, archive integrity, and cached-DEB hashes before adding it." preferredStyle:UIAlertControllerStyleAlert]; [self presentViewController:progress animated:YES completion:nil]; dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ NSError *error = nil; NSURL *imported = [ATMAppModel.shared.backupManager importBackupFromURL:url password:password error:&error]; dispatch_async(dispatch_get_main_queue(), ^{ self.pendingImportURL = nil; [progress dismissViewControllerAnimated:YES completion:^{ if (!imported) { ATMShowError(self, error.code == 54 ? @"Already Imported" : @"Import failed", error); return; } [self reloadData]; UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Backup Imported" message:@"The archive passed health and integrity checks. No restore action was executed." preferredStyle:UIAlertControllerStyleAlert]; [alert addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleCancel handler:nil]]; [self presentViewController:alert animated:YES completion:nil]; }]; }); }); }
+- (void)performImport:(NSURL *)url password:(NSString *)password { UIAlertController *progress = [UIAlertController alertControllerWithTitle:@"Inspecting Import" message:@"Checking format, archive integrity, and cached-DEB hashes before adding it." preferredStyle:UIAlertControllerStyleAlert]; [self presentViewController:progress animated:YES completion:nil]; dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ NSError *error = nil; NSURL *imported = [ATMAppModel.shared.backupManager importBackupFromURL:url password:password error:&error]; NSError *reportError = nil; NSURL *failureReport = imported ? nil : ATMWriteDiagnosticReport(ATMAppModel.shared.environment, ATMAppModel.shared.packages, ATMAppModel.shared.ledger.selectedPackageIDs, ATMAppModel.shared.scanError, &reportError); dispatch_async(dispatch_get_main_queue(), ^{ self.pendingImportURL = nil; [progress dismissViewControllerAnimated:YES completion:^{ if (!imported) { ATMShowErrorWithReport(self, error.code == 54 ? @"Already Imported" : @"Import failed", error, failureReport); return; } [self reloadData]; UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Backup Imported" message:@"The archive passed health and integrity checks. No restore action was executed." preferredStyle:UIAlertControllerStyleAlert]; [alert addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleCancel handler:nil]]; [self presentViewController:alert animated:YES completion:nil]; }]; }); }); }
 - (void)shareURL:(NSURL *)url { UIActivityViewController *activity = [[UIActivityViewController alloc] initWithActivityItems:@[url] applicationActivities:nil]; activity.popoverPresentationController.sourceView = self.view; activity.popoverPresentationController.sourceRect = self.view.bounds; [self presentViewController:activity animated:YES completion:nil]; }
 - (UISwipeActionsConfiguration *)tableView:(UITableView *)tableView leadingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath { (void)tableView; if (indexPath.section == 0 || !self.backups.count) return nil; NSURL *url = self.backups[indexPath.row]; BOOL pinned = [ATMAppModel.shared.backupManager isBackupPinned:url]; UIContextualAction *pin = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleNormal title:pinned ? @"Unpin" : @"Pin" handler:^(__unused UIContextualAction *action, __unused UIView *view, void (^completion)(BOOL)) { [ATMAppModel.shared.backupManager setBackup:url pinned:!pinned]; completion(YES); [self reloadData]; }]; pin.backgroundColor = UIColor.systemBlueColor; return [UISwipeActionsConfiguration configurationWithActions:@[pin]]; }
 - (UISwipeActionsConfiguration *)tableView:(UITableView *)tableView trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath { (void)tableView; if (indexPath.section == 0 || !self.backups.count) return nil; UIContextualAction *delete = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleDestructive title:@"Delete" handler:^(__unused UIContextualAction *action, __unused UIView *sourceView, void (^completion)(BOOL)) { NSURL *url = self.backups[indexPath.row]; UIAlertController *confirm = [UIAlertController alertControllerWithTitle:@"Delete Backup?" message:@"This permanently removes this backup from the device. Other backups and selections are unchanged." preferredStyle:UIAlertControllerStyleAlert]; [confirm addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(__unused UIAlertAction *a) { completion(NO); }]]; [confirm addAction:[UIAlertAction actionWithTitle:@"Delete" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *a) { NSError *error = nil; BOOL ok = [NSFileManager.defaultManager removeItemAtURL:url error:&error]; if (ok) { [ATMAppModel.shared.backupManager setBackup:url pinned:NO]; [ATMAppModel.shared.ledger recordEvent:@"backup-deleted" packageID:nil details:nil]; } completion(ok); [self reloadData]; if (!ok) ATMShowError(self, @"Delete failed", error); }]]; [self presentViewController:confirm animated:YES completion:nil]; }]; UISwipeActionsConfiguration *configuration = [UISwipeActionsConfiguration configurationWithActions:@[delete]]; configuration.performsFirstActionWithFullSwipe = NO; return configuration; }
