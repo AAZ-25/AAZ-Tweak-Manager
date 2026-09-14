@@ -205,23 +205,21 @@ static NSString *ATMPruneUnexpectedStagedEntries(NSURL *stage, NSArray<NSString 
     NSSet<NSString *> *expectedFiles = [NSSet setWithArray:safePaths ?: @[]];
     NSSet<NSString *> *expectedDirectories = [NSSet setWithArray:requiredDirectories];
     NSMutableArray<NSDictionary *> *unexpectedDirectories = [NSMutableArray array];
-    __block BOOL enumerationFailed = NO;
-    NSDirectoryEnumerator *enumerator = [NSFileManager.defaultManager enumeratorAtURL:stage includingPropertiesForKeys:nil options:0 errorHandler:^BOOL(NSURL *url, NSError *enumerationError) {
-        (void)url; (void)enumerationError; enumerationFailed = YES; return NO;
-    }];
-    for (NSURL *url in enumerator) {
-        NSString *relativePath = [url.path substringFromIndex:stage.path.length + 1];
+    NSDirectoryEnumerator *enumerator = [NSFileManager.defaultManager enumeratorAtPath:stage.path];
+    if (!enumerator) return @"enumeration";
+    for (NSString *relativePath in enumerator) {
+        if (![relativePath isKindOfClass:NSString.class] || !relativePath.length || [relativePath hasPrefix:@"/"] || [relativePath containsString:@".."] || [relativePath containsString:@"\0"] || [relativePath containsString:@"\r"] || [relativePath containsString:@"\n"]) return @"enumeration";
+        NSString *fullPath = [stage.path stringByAppendingPathComponent:relativePath];
         struct stat stagedInfo;
-        if (!relativePath.length || lstat(url.path.fileSystemRepresentation, &stagedInfo) != 0) return @"enumeration";
+        if (lstat(fullPath.fileSystemRepresentation, &stagedInfo) != 0) return @"enumeration";
         if (S_ISDIR(stagedInfo.st_mode)) {
             if (![expectedDirectories containsObject:relativePath]) {
-                [unexpectedDirectories addObject:@{ @"url": url, @"path": relativePath }];
+                [unexpectedDirectories addObject:@{ @"fullPath": fullPath, @"path": relativePath }];
             }
             continue;
         }
-        if (![expectedFiles containsObject:relativePath] && unlink(url.path.fileSystemRepresentation) != 0) return @"unexpected-entry";
+        if (![expectedFiles containsObject:relativePath] && unlink(fullPath.fileSystemRepresentation) != 0) return @"unexpected-entry";
     }
-    if (enumerationFailed) return @"enumeration";
     [unexpectedDirectories sortUsingComparator:^NSComparisonResult(NSDictionary *left, NSDictionary *right) {
         NSUInteger leftDepth = [left[@"path"] pathComponents].count;
         NSUInteger rightDepth = [right[@"path"] pathComponents].count;
@@ -230,8 +228,8 @@ static NSString *ATMPruneUnexpectedStagedEntries(NSURL *stage, NSArray<NSString 
         return [right[@"path"] compare:left[@"path"]];
     }];
     for (NSDictionary *entry in unexpectedDirectories) {
-        NSURL *url = entry[@"url"];
-        if (rmdir(url.path.fileSystemRepresentation) != 0) return @"unexpected-entry";
+        NSString *fullPath = entry[@"fullPath"];
+        if (rmdir(fullPath.fileSystemRepresentation) != 0) return @"unexpected-entry";
     }
     return nil;
 }
@@ -241,12 +239,13 @@ static NSString *ATMStagedPayloadVerificationFailure(NSURL *stage, NSString *pay
     if (!requiredDirectories) return @"source";
     NSSet<NSString *> *expectedFiles = [NSSet setWithArray:safePaths], *expectedDirectories = [NSSet setWithArray:requiredDirectories];
     NSMutableSet<NSString *> *seenFiles = [NSMutableSet set], *seenDirectories = [NSMutableSet set];
-    __block BOOL enumerationFailed = NO;
-    NSDirectoryEnumerator *enumerator = [NSFileManager.defaultManager enumeratorAtURL:stage includingPropertiesForKeys:nil options:0 errorHandler:^BOOL(NSURL *url, NSError *enumerationError) { (void)url; (void)enumerationError; enumerationFailed = YES; return NO; }];
-    for (NSURL *url in enumerator) {
-        NSString *relativePath = [url.path substringFromIndex:stage.path.length + 1];
+    NSDirectoryEnumerator *enumerator = [NSFileManager.defaultManager enumeratorAtPath:stage.path];
+    if (!enumerator) return @"enumeration";
+    for (NSString *relativePath in enumerator) {
+        if (![relativePath isKindOfClass:NSString.class] || !relativePath.length || [relativePath hasPrefix:@"/"] || [relativePath containsString:@".."] || [relativePath containsString:@"\0"] || [relativePath containsString:@"\r"] || [relativePath containsString:@"\n"]) return @"enumeration";
+        NSString *fullPath = [stage.path stringByAppendingPathComponent:relativePath];
         struct stat stagedInfo;
-        if (!relativePath.length || lstat(url.path.fileSystemRepresentation, &stagedInfo) != 0) return @"enumeration";
+        if (lstat(fullPath.fileSystemRepresentation, &stagedInfo) != 0) return @"enumeration";
         if (S_ISDIR(stagedInfo.st_mode)) {
             if (![expectedDirectories containsObject:relativePath]) return @"unexpected-directory";
             [seenDirectories addObject:relativePath];
@@ -261,15 +260,14 @@ static NSString *ATMStagedPayloadVerificationFailure(NSURL *stage, NSString *pay
         if (S_ISREG(sourceInfo.st_mode)) {
             if ((sourceInfo.st_mode & 07777) != (stagedInfo.st_mode & 07777)) return @"mode";
             if (sourceInfo.st_size != stagedInfo.st_size) return @"size";
-            if (!ATMFilesEqualWithOptionalPrivilegedTool(sourcePath, url.path, compareTool)) return @"content";
+            if (!ATMFilesEqualWithOptionalPrivilegedTool(sourcePath, fullPath, compareTool)) return @"content";
         } else {
             NSString *sourceTarget = [NSFileManager.defaultManager destinationOfSymbolicLinkAtPath:sourcePath error:nil];
-            NSString *stagedTarget = [NSFileManager.defaultManager destinationOfSymbolicLinkAtPath:url.path error:nil];
+            NSString *stagedTarget = [NSFileManager.defaultManager destinationOfSymbolicLinkAtPath:fullPath error:nil];
             if (!sourceTarget.length || ![sourceTarget isEqualToString:stagedTarget]) return @"symlink";
         }
         [seenFiles addObject:relativePath];
     }
-    if (enumerationFailed) return @"enumeration";
     if (![seenFiles isEqualToSet:expectedFiles] || ![seenDirectories isEqualToSet:expectedDirectories]) return @"missing-entry";
     return nil;
 }
@@ -596,7 +594,8 @@ static NSData *ATMDecryptArchive(NSData *container, NSString *password, NSError 
     NSString *failureStage = nil;
     NSMutableArray<NSString *> *observedStages = [NSMutableArray array];
     NSString *dpkgDeb = [self backupExecutableForPaths:@[@"/usr/bin/dpkg-deb", @"/bin/dpkg-deb"]];
-    BOOL passed = dpkgDeb.length;
+    NSString *dpkg = [self backupExecutableForPaths:@[@"/usr/bin/dpkg", @"/bin/dpkg"]];
+    BOOL passed = dpkgDeb.length && dpkg.length;
     if (!passed) failureStage = @"preflight-tools";
     if (passed && [ATMRunBackupToolWithPrivilege(dpkgDeb, @[@"--version"], YES, nil)[@"exitCode"] integerValue] != 0) { passed = NO; failureStage = @"preflight-persona"; }
     NSData *probeData = [@"AAZ safe preflight\n" dataUsingEncoding:NSUTF8StringEncoding];
@@ -651,6 +650,7 @@ static NSData *ATMDecryptArchive(NSData *container, NSString *password, NSError 
         NSString *verificationFailure = ATMStagedPayloadVerificationFailure(reopen, payloadRoot.path, paths, directories, compare);
         if (verificationFailure) { passed = NO; failureStage = ATMVerificationStage(@"preflight-payload-verify", verificationFailure); }
     }
+    if (passed && [ATMRunBackupToolWithPrivilege(dpkg, @[@"--no-act", @"--refuse-downgrade", @"--install", debURL.path], YES, nil)[@"exitCode"] integerValue] != 0) { passed = NO; failureStage = @"preflight-restore-dry-run"; }
     NSURL *archiveURL = [root URLByAppendingPathComponent:@"preflight.aaztmbackup"];
     if (passed) {
         NSString *sha = ATMSHA256ForFile(debURL, nil);

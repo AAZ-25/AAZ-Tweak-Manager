@@ -316,7 +316,7 @@ static NSDictionary *ATMRestoreVerifiedPayload(ATMEnvironment *environment, NSDi
     BOOL embeddedOnly = [currentPlan[@"executionSnapshot"][@"embeddedOnly"] boolValue];
     NSString *aptGet = ATMRestoreExecutable(self.environment, @[@"/usr/bin/apt-get", @"/bin/apt-get"]);
     NSString *dpkg = ATMRestoreExecutable(self.environment, @[@"/usr/bin/dpkg", @"/bin/dpkg"]);
-    if (!aptGet.length || !requests.count || (embeddedOnly && !dpkg.length)) {
+    if (!requests.count || (embeddedOnly ? !dpkg.length : !aptGet.length)) {
         if (error) *error = ATMRestorePlanError(76, @"The approved package-manager action is unavailable.");
         return nil;
     }

@@ -27,7 +27,7 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "48"
+assert info["CFBundleVersion"] == "49"
 assert info["LSSupportsOpeningDocumentsInPlace"] is False
 assert "CFBundleDocumentTypes" not in info
 
@@ -47,7 +47,7 @@ assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["Ap
 with (ROOT / "Extension/Resources/Info.plist").open("rb") as handle:
     extension_info = plistlib.load(handle)
 assert extension_info["CFBundleIdentifier"] == "com.aaz.tweakmanager.importer"
-assert extension_info["CFBundleVersion"] == "48"
+assert extension_info["CFBundleVersion"] == "49"
 assert extension_info["CFBundlePackageType"] == "XPC!"
 extension_definition = extension_info["NSExtension"]
 assert extension_definition["NSExtensionPointIdentifier"] == "com.apple.share-services"
@@ -65,7 +65,7 @@ assert extension_entitlements == {
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta48" in control
+assert "Version: 0.1.0~beta49" in control
 assert "Priority: optional" in control
 assert "Depends: firmware (>= 15.0), coreutils, diffutils, dpkg, tar" in control
 
@@ -348,8 +348,10 @@ assert 'ATMVerificationStage' in backup_manager_text
 assert 'ATMRequiredDirectoryPaths' in backup_manager_text
 assert 'ATMNormalizeStagedPayloadModes' in backup_manager_text
 assert 'ATMPruneUnexpectedStagedEntries' in backup_manager_text
-assert 'unlink(url.path.fileSystemRepresentation)' in backup_manager_text
-assert 'rmdir(url.path.fileSystemRepresentation)' in backup_manager_text
+assert 'enumeratorAtPath:stage.path' in backup_manager_text
+assert 'substringFromIndex:stage.path.length + 1' not in backup_manager_text
+assert 'unlink(fullPath.fileSystemRepresentation)' in backup_manager_text
+assert 'rmdir(fullPath.fileSystemRepresentation)' in backup_manager_text
 assert 'if (![expectedDirectories containsObject:relativePath]) return @"unexpected-directory";' in backup_manager_text
 assert 'pathsWithListedDescendants' in backup_manager_text
 assert 'rootedMatches == listedPaths.count' in backup_manager_text
@@ -378,6 +380,9 @@ assert 'observedFailureStages:(NSArray<NSString *> **)observedFailureStages' in 
 assert 'for (NSString *observedStage in observedFailureStages)' in backup_manager_text
 assert 'ATMFilesEqualWithOptionalPrivilegedTool' in backup_manager_text
 assert 'ATMRunBackupToolWithPrivilege(dpkgDeb, @[@"--version"], YES, nil)' in backup_manager_text
+assert 'ATMRunBackupToolWithPrivilege(dpkg, @[@"--no-act", @"--refuse-downgrade", @"--install", debURL.path], YES, nil)' in backup_manager_text
+assert '@"preflight-restore-dry-run"' in all_text
+assert 'if (!requests.count || (embeddedOnly ? !dpkg.length : !aptGet.length))' in restore_planner_text
 assert '@"/usr/bin/true"' not in backup_manager_text
 assert 'cancelCurrentBackup' in all_text
 assert 'Share Privacy-Safe Report' in all_text
@@ -521,6 +526,29 @@ with tempfile.TemporaryDirectory() as temporary:
             candidate.unlink()
     assert {str(item.relative_to(structural_stage)) for item in structural_stage.rglob("*")} == expected_files | expected_directories
 
+    # iOS can expose an app-owned /var path through its /private/var physical
+    # alias. Absolute URL-prefix slicing then corrupts every relative name.
+    # Root-relative enumeration must keep the inventory names unchanged.
+    physical_container = temporary_root / "private-var-container"
+    aliased_container = temporary_root / "var-container"
+    physical_stage = physical_container / "stage"
+    (physical_stage / "usr/lib/aaz-package").mkdir(parents=True)
+    (physical_stage / "usr/lib/aaz-package/payload").write_text("alias-safe payload")
+    aliased_container.symlink_to(physical_container, target_is_directory=True)
+    aliased_stage = aliased_container / "stage"
+    relative_entries = {
+        str(item.relative_to(aliased_stage))
+        for item in aliased_stage.rglob("*")
+    }
+    assert relative_entries == {
+        "usr",
+        "usr/lib",
+        "usr/lib/aaz-package",
+        "usr/lib/aaz-package/payload",
+    }
+    physical_child = physical_stage / "usr/lib/aaz-package/payload"
+    assert str(physical_child)[len(str(aliased_stage)) + 1:] != "usr/lib/aaz-package/payload"
+
     structural_tar_list = temporary_root / "structural-files"
     structural_tar_list.write_text("usr/lib/aaz-package/payload\n")
     structural_tar = temporary_root / "structural.tar"
@@ -539,6 +567,11 @@ with tempfile.TemporaryDirectory() as temporary:
     )
     synthetic_deb = temporary_root / "preflight.deb"
     subprocess.run(["dpkg-deb", "--build", str(package_stage), str(synthetic_deb)], check=True, capture_output=True)
+    subprocess.run(
+        ["dpkg", "--no-act", "--refuse-downgrade", "--install", str(synthetic_deb)],
+        check=True,
+        capture_output=True,
+    )
     reopened = temporary_root / "reopened"
     subprocess.run(["dpkg-deb", "--extract", str(synthetic_deb), str(reopened)], check=True, capture_output=True)
     assert (reopened / "usr/lib/aaz-preflight/probe").read_bytes() == executable.read_bytes()
