@@ -323,12 +323,16 @@ static NSString *const ATMLastImportAttemptStateKey = @"ATMLastImportAttemptStat
 static NSInteger ATMImportDiagnosticSuppressionDepth = 0;
 static NSString *const ATMLastRestoreCodeKey = @"ATMLastRestoreCodeV1";
 static NSString *const ATMLastRestoreExitCodeKey = @"ATMLastRestoreExitCodeV1";
+static NSString *const ATMLastRestoreBuildKey = @"ATMLastRestoreBuildV2";
+static NSString *const ATMLastRestoreSummaryKey = @"ATMLastRestoreSummaryV2";
+static NSString *const ATMLastBackupBuildKey = @"ATMLastBackupBuildV2";
+static NSString *const ATMLastBackupSummaryKey = @"ATMLastBackupSummaryV2";
 
 static BOOL ATMRestoreDiagnosticCodeAllowed(NSString *code) {
     static NSSet<NSString *> *allowedCodes; static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         allowedCodes = [NSSet setWithArray:@[
-            @"R40-READINESS", @"R40-READY", @"R40-BLOCKED", @"R40-STARTED", @"R40-OK", @"R40-PRECHECK", @"R40-APT-PREFLIGHT",
+            @"R40-READINESS", @"R40-READY", @"R40-NOOP", @"R40-BLOCKED", @"R40-STARTED", @"R40-OK", @"R40-PRECHECK", @"R40-APT-PREFLIGHT",
             @"R40-PERSONA", @"R40-SPAWN", @"R40-SIGNAL", @"R40-LOCK", @"R40-PRIVILEGE", @"R40-STORAGE", @"R40-DPKG", @"R40-DPKG-PREFLIGHT", @"R40-PARTIAL",
             @"R40-DEPENDENCY", @"R40-ARCHIVE", @"R40-AUTH", @"R40-SOURCE-AUTH", @"R40-SOURCE-PREFLIGHT", @"R40-SOURCE-READY", @"R40-SOURCE-OK", @"R40-SOURCE-RESTORE", @"R40-NETWORK", @"R40-APT", @"R40-POSTSCAN", @"R40-VERIFY", @"R40-UNKNOWN"
         ]];
@@ -340,6 +344,60 @@ void ATMSetRestoreDiagnosticState(NSString *code, NSInteger exitCode) {
     NSString *safeCode = ATMRestoreDiagnosticCodeAllowed(code) ? code : @"R40-UNKNOWN";
     [NSUserDefaults.standardUserDefaults setObject:safeCode forKey:ATMLastRestoreCodeKey];
     [NSUserDefaults.standardUserDefaults setInteger:exitCode forKey:ATMLastRestoreExitCodeKey];
+    [NSUserDefaults.standardUserDefaults setObject:NSBundle.mainBundle.infoDictionary[@"CFBundleVersion"] ?: @"unknown" forKey:ATMLastRestoreBuildKey];
+}
+
+NSArray<NSString *> *ATMBackupCaptureStageKeys(void) {
+    NSMutableArray<NSString *> *keys = [@[@"preflight", @"preflight-warning", @"preflight-workspace", @"preflight-tools", @"preflight-persona", @"preflight-staging", @"preflight-direct-copy-tools", @"preflight-direct-copy", @"preflight-direct-directory-containment", @"preflight-direct-directory-create", @"preflight-fallback-staging", @"preflight-fallback-create", @"preflight-fallback-extract", @"preflight-fallback-verify", @"preflight-control", @"preflight-build", @"preflight-identity", @"preflight-identity-file", @"preflight-identity-tool", @"preflight-identity-package", @"preflight-identity-version", @"preflight-identity-architecture", @"preflight-identity-policy", @"preflight-identity-hash", @"preflight-identity-unknown", @"preflight-reopen-directory", @"preflight-reopen", @"preflight-payload-verify", @"preflight-restore-dry-run", @"preflight-archive", @"preflight-archive-verify", @"preflight-share-inbox", @"preflight-import", @"preflight-unknown", @"inventory", @"payload", @"privacy", @"verification", @"tools", @"workspace", @"staging", @"directory-containment", @"directory-create", @"directory-staging", @"archive", @"archive-create", @"archive-extract", @"direct-copy-tools", @"direct-copy", @"direct-copy-verify", @"archive-fallback-create", @"archive-fallback-extract", @"archive-fallback-verify", @"control", @"build", @"identity", @"identity-file", @"identity-tool", @"identity-package", @"identity-version", @"identity-architecture", @"identity-policy", @"identity-hash", @"identity-unknown", @"package-reopen-directory", @"package-reopen", @"package-payload-verify", @"cancelled", @"unknown"] mutableCopy];
+    NSArray<NSString *> *prefixes = @[@"preflight-direct-copy-verify", @"preflight-fallback-verify", @"preflight-payload-verify", @"direct-copy-verify", @"archive-fallback-verify", @"package-payload-verify"];
+    NSArray<NSString *> *reasons = @[@"enumeration", @"unexpected-directory", @"unexpected-entry", @"missing-entry", @"source", @"type", @"mode", @"size", @"content", @"symlink", @"unknown"];
+    for (NSString *prefix in prefixes) for (NSString *reason in reasons) [keys addObject:[NSString stringWithFormat:@"%@-%@", prefix, reason]];
+    return keys;
+}
+
+static NSNumber *ATMReportNumber(id value) { return [value isKindOfClass:NSNumber.class] ? value : @0; }
+
+void ATMStoreBackupReportSummary(NSDictionary *report) {
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    if (![report isKindOfClass:NSDictionary.class]) {
+        [defaults removeObjectForKey:ATMLastBackupBuildKey];
+        [defaults removeObjectForKey:ATMLastBackupSummaryKey];
+        return;
+    }
+    NSDictionary *manifest = [report[@"manifest"] isKindOfClass:NSDictionary.class] ? report[@"manifest"] : @{};
+    NSDictionary *failures = [report[@"captureFailureCounts"] isKindOfClass:NSDictionary.class] ? report[@"captureFailureCounts"] : @{};
+    NSMutableDictionary *safeFailures = [NSMutableDictionary dictionary];
+    for (NSString *key in ATMBackupCaptureStageKeys()) safeFailures[key] = ATMReportNumber(failures[key]);
+    static NSSet<NSString *> *healthValues; static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{ healthValues = [NSSet setWithArray:@[@"Healthy", @"Incomplete", @"Failed", @"Cancelled", @"Preparing"]]; });
+    NSString *health = [healthValues containsObject:report[@"health"]] ? report[@"health"] : @"Unknown";
+    NSDictionary *summary = @{
+        @"health": health, @"portable": @([report[@"portable"] boolValue]),
+        @"packages": ATMReportNumber(report[@"packageCount"]), @"sources": ATMReportNumber(report[@"sourceCount"]),
+        @"restorableSources": ATMReportNumber(report[@"restorableSourceCount"]), @"embeddedDEBs": ATMReportNumber(report[@"cachedDEBCount"]),
+        @"safelyRepacked": ATMReportNumber(report[@"repackedDEBCount"]), @"portableCoverage": ATMReportNumber(manifest[@"payloadCoverage"]),
+        @"payloadUnavailable": ATMReportNumber(report[@"missingPayloadCount"]), @"badHashes": ATMReportNumber(report[@"badHashCount"]),
+        @"packageHashFailures": ATMReportNumber(report[@"packageHashFailureCount"]), @"sourceHashFailures": ATMReportNumber(report[@"sourceHashFailureCount"]),
+        @"unreadableEntries": ATMReportNumber(report[@"unreadableEntryCount"]), @"captureFailureCounts": safeFailures
+    };
+    [defaults setObject:NSBundle.mainBundle.infoDictionary[@"CFBundleVersion"] ?: @"unknown" forKey:ATMLastBackupBuildKey];
+    [defaults setObject:summary forKey:ATMLastBackupSummaryKey];
+}
+
+void ATMStoreRestoreReportSummary(NSDictionary *plan, NSDictionary *result, NSError *failure) {
+    NSString *state = result ? ([result[@"success"] boolValue] ? @"completed" : @"failed") : (plan ? ([plan[@"safeToExecute"] boolValue] ? @"ready" : ([plan[@"noChangesNeeded"] boolValue] ? @"no-op" : @"blocked")) : @"failed");
+    NSDictionary *summary = @{
+        @"state": state, @"errorCode": @(failure ? failure.code : 0),
+        @"requested": ATMReportNumber(result[@"requested"]), @"completed": ATMReportNumber(result[@"completed"]),
+        @"remaining": ATMReportNumber(result[@"remaining"]), @"sourcesPending": ATMReportNumber(plan[@"sourcesToRestore"]),
+        @"sourcesRestored": ATMReportNumber(result[@"sourcesRestored"]),
+        @"privateSourcesSkipped": ATMReportNumber(result[@"privateSourcesSkipped"] ?: plan[@"privateSourcesSkipped"]),
+        @"blocked": ATMReportNumber(plan[@"blocked"]), @"protectedOrInvalid": ATMReportNumber(plan[@"protectedOrInvalid"]),
+        @"held": ATMReportNumber(plan[@"held"]), @"metadataUnavailable": ATMReportNumber(plan[@"metadataUnavailable"]),
+        @"unexpectedActions": ATMReportNumber(plan[@"unexpectedActions"])
+    };
+    [NSUserDefaults.standardUserDefaults setObject:NSBundle.mainBundle.infoDictionary[@"CFBundleVersion"] ?: @"unknown" forKey:ATMLastRestoreBuildKey];
+    [NSUserDefaults.standardUserDefaults setObject:summary forKey:ATMLastRestoreSummaryKey];
 }
 
 static BOOL ATMImportDiagnosticStageAllowed(NSString *stage) {
@@ -416,11 +474,38 @@ void ATMSetImportDiagnosticState(NSString *stage, NSInteger code) {
     ATMRecordImportDiagnosticEvent(stage);
 }
 
-NSURL *ATMWriteDiagnosticReport(ATMEnvironment *environment,
-                                NSArray<ATMPackageRecord *> *packages,
-                                NSSet<NSString *> *selectedPackageIDs,
-                                NSError *scanError,
-                                NSError **error) {
+static NSDictionary *ATMCurrentReportState(void) {
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    NSString *currentBuild = NSBundle.mainBundle.infoDictionary[@"CFBundleVersion"] ?: @"unknown";
+    BOOL backupCurrent = [[defaults stringForKey:ATMLastBackupBuildKey] isEqualToString:currentBuild];
+    BOOL importCurrent = [[defaults stringForKey:ATMLastImportBuildKey] isEqualToString:currentBuild];
+    BOOL restoreCurrent = [[defaults stringForKey:ATMLastRestoreBuildKey] isEqualToString:currentBuild];
+    return @{ @"build": currentBuild,
+              @"backup": backupCurrent ? ([defaults dictionaryForKey:ATMLastBackupSummaryKey] ?: @{}) : @{},
+              @"importCurrent": @(importCurrent), @"restoreCurrent": @(restoreCurrent),
+              @"restore": restoreCurrent ? ([defaults dictionaryForKey:ATMLastRestoreSummaryKey] ?: @{}) : @{} };
+}
+
+NSDictionary<NSString *, NSString *> *ATMUnifiedReportSnapshot(void) {
+    NSDictionary *state = ATMCurrentReportState(); NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    NSDictionary *backup = state[@"backup"];
+    BOOL importCurrent = [state[@"importCurrent"] boolValue], restoreCurrent = [state[@"restoreCurrent"] boolValue];
+    NSString *backupStatus = backup.count ? [NSString stringWithFormat:@"%@ • %@/%@ DEBs", backup[@"health"] ?: @"Unknown", backup[@"embeddedDEBs"] ?: @0, backup[@"packages"] ?: @0] : @"No current result";
+    NSString *importState = importCurrent ? ([defaults stringForKey:ATMLastImportAttemptStateKey] ?: @"not-run") : @"No current result";
+    NSString *restoreCode = restoreCurrent ? ([defaults stringForKey:ATMLastRestoreCodeKey] ?: @"not-run") : @"No current result";
+    NSSet<NSString *> *nonFailureRestoreCodes = [NSSet setWithArray:@[@"R40-OK", @"R40-SOURCE-OK", @"R40-NOOP", @"R40-READY", @"R40-SOURCE-READY"]];
+    BOOL failed = (backup.count && ![backup[@"health"] isEqualToString:@"Healthy"]) || (importCurrent && [importState isEqualToString:@"failed"]) || (restoreCurrent && ![nonFailureRestoreCodes containsObject:restoreCode]);
+    BOOL backupOK = [backup[@"health"] isEqualToString:@"Healthy"];
+    BOOL importOK = importCurrent && [importState isEqualToString:@"completed"];
+    BOOL restoreOK = restoreCurrent && [@[@"R40-OK", @"R40-SOURCE-OK", @"R40-NOOP"] containsObject:restoreCode];
+    NSString *overall = failed ? @"Needs Attention" : (backupOK && importOK && restoreOK ? @"Healthy" : (backupOK && importOK ? @"Restore Test Pending" : ((backup.count || importCurrent || restoreCurrent) ? @"Current Results Available" : @"No current result")));
+    return @{ @"overall": overall, @"backup": backupStatus, @"import": importState, @"restore": restoreCode, @"build": state[@"build"] ?: @"unknown" };
+}
+
+NSString *ATMUnifiedReportText(ATMEnvironment *environment,
+                               NSArray<ATMPackageRecord *> *packages,
+                               NSSet<NSString *> *selectedPackageIDs,
+                               NSError *scanError) {
     NSUInteger personal = 0;
     NSUInteger automatic = 0;
     NSUInteger essential = 0;
@@ -441,15 +526,56 @@ NSURL *ATMWriteDiagnosticReport(ATMEnvironment *environment,
     NSFileManager *fm = NSFileManager.defaultManager;
     NSDictionary *info = NSBundle.mainBundle.infoDictionary;
     NSString *currentBuild = info[@"CFBundleVersion"] ?: @"unknown";
+    NSDictionary *state = ATMCurrentReportState(); NSDictionary *snapshot = ATMUnifiedReportSnapshot();
+    NSDictionary *backup = state[@"backup"], *restore = state[@"restore"];
+    BOOL currentImportAttempt = [state[@"importCurrent"] boolValue], currentRestoreCode = [state[@"restoreCurrent"] boolValue];
     NSString *storedImportBuild = [NSUserDefaults.standardUserDefaults stringForKey:ATMLastImportBuildKey];
-    BOOL currentImportAttempt = storedImportBuild.length && [storedImportBuild isEqualToString:currentBuild];
     NSString *storedRestoreCode = [NSUserDefaults.standardUserDefaults stringForKey:ATMLastRestoreCodeKey];
-    BOOL currentRestoreCode = [storedRestoreCode hasPrefix:@"R40-"];
     NSMutableArray<NSString *> *lines = [@[
-        @"AAZ Tweak Manager Diagnostic",
-        @"format=1",
+        @"AAZ Tweak Manager Report",
+        @"format=2",
         [NSString stringWithFormat:@"appVersion=%@", info[@"CFBundleShortVersionString"] ?: @"unknown"],
         [NSString stringWithFormat:@"appBuild=%@", currentBuild],
+        @"[Summary]",
+        [NSString stringWithFormat:@"overall=%@", snapshot[@"overall"]],
+        @"[Backup]",
+        [NSString stringWithFormat:@"backupState=%@", backup.count ? @"current" : @"not-run"],
+        [NSString stringWithFormat:@"health=%@", backup[@"health"] ?: @"not-run"],
+        [NSString stringWithFormat:@"portable=%@", backup.count ? ([backup[@"portable"] boolValue] ? @"yes" : @"no") : @"not-run"],
+        [NSString stringWithFormat:@"packages=%@", backup[@"packages"] ?: @0],
+        [NSString stringWithFormat:@"sources=%@", backup[@"sources"] ?: @0],
+        [NSString stringWithFormat:@"restorableSources=%@", backup[@"restorableSources"] ?: @0],
+        [NSString stringWithFormat:@"embeddedDEBs=%@", backup[@"embeddedDEBs"] ?: @0],
+        [NSString stringWithFormat:@"safelyRepacked=%@", backup[@"safelyRepacked"] ?: @0],
+        [NSString stringWithFormat:@"portableCoverage=%@", backup[@"portableCoverage"] ?: @0],
+        [NSString stringWithFormat:@"payloadUnavailable=%@", backup[@"payloadUnavailable"] ?: @0],
+        [NSString stringWithFormat:@"badHashes=%@", backup[@"badHashes"] ?: @0],
+        [NSString stringWithFormat:@"packageHashFailures=%@", backup[@"packageHashFailures"] ?: @0],
+        [NSString stringWithFormat:@"sourceHashFailures=%@", backup[@"sourceHashFailures"] ?: @0],
+        [NSString stringWithFormat:@"unreadableEntries=%@", backup[@"unreadableEntries"] ?: @0],
+        @"[Import]",
+        [NSString stringWithFormat:@"importAttemptBuild=%@", currentImportAttempt ? storedImportBuild : @"not-run"],
+        [NSString stringWithFormat:@"importAttemptID=%@", currentImportAttempt ? ([NSUserDefaults.standardUserDefaults stringForKey:ATMLastImportAttemptKey] ?: @"not-run") : @"not-run"],
+        [NSString stringWithFormat:@"importAttemptState=%@", currentImportAttempt ? ([NSUserDefaults.standardUserDefaults stringForKey:ATMLastImportAttemptStateKey] ?: @"not-run") : @"not-run"],
+        [NSString stringWithFormat:@"importStage=%@", currentImportAttempt ? ([NSUserDefaults.standardUserDefaults stringForKey:ATMLastImportStageKey] ?: @"not-run") : @"not-run"],
+        [NSString stringWithFormat:@"importErrorCode=%ld", (long)(currentImportAttempt ? [NSUserDefaults.standardUserDefaults integerForKey:ATMLastImportErrorCodeKey] : 0)],
+        @"[Restore]",
+        [NSString stringWithFormat:@"restoreState=%@", currentRestoreCode ? (restore[@"state"] ?: @"current") : @"not-run"],
+        [NSString stringWithFormat:@"restoreCode=%@", currentRestoreCode ? storedRestoreCode : @"not-run"],
+        [NSString stringWithFormat:@"restoreExitCode=%ld", (long)(currentRestoreCode ? [NSUserDefaults.standardUserDefaults integerForKey:ATMLastRestoreExitCodeKey] : -1)],
+        [NSString stringWithFormat:@"restoreErrorCode=%@", restore[@"errorCode"] ?: @0],
+        [NSString stringWithFormat:@"requested=%@", restore[@"requested"] ?: @0],
+        [NSString stringWithFormat:@"completed=%@", restore[@"completed"] ?: @0],
+        [NSString stringWithFormat:@"remaining=%@", restore[@"remaining"] ?: @0],
+        [NSString stringWithFormat:@"sourcesPending=%@", restore[@"sourcesPending"] ?: @0],
+        [NSString stringWithFormat:@"sourcesRestored=%@", restore[@"sourcesRestored"] ?: @0],
+        [NSString stringWithFormat:@"privateSourcesSkipped=%@", restore[@"privateSourcesSkipped"] ?: @0],
+        [NSString stringWithFormat:@"blocked=%@", restore[@"blocked"] ?: @0],
+        [NSString stringWithFormat:@"protectedOrInvalid=%@", restore[@"protectedOrInvalid"] ?: @0],
+        [NSString stringWithFormat:@"held=%@", restore[@"held"] ?: @0],
+        [NSString stringWithFormat:@"metadataUnavailable=%@", restore[@"metadataUnavailable"] ?: @0],
+        [NSString stringWithFormat:@"unexpectedActions=%@", restore[@"unexpectedActions"] ?: @0],
+        @"[Environment]",
         [NSString stringWithFormat:@"rootlessDetected=%@", environment.supportedRootless ? @"yes" : @"no"],
         [NSString stringWithFormat:@"statusDatabase=%@", databaseKind],
         [NSString stringWithFormat:@"statusReadable=%@", [fm isReadableFileAtPath:environment.dpkgStatusPath] ? @"yes" : @"no"],
@@ -462,18 +588,13 @@ NSURL *ATMWriteDiagnosticReport(ATMEnvironment *environment,
         [NSString stringWithFormat:@"excludedPriority=%lu", (unsigned long)requiredPriority],
         [NSString stringWithFormat:@"excludedProtected=%lu", (unsigned long)protectedPackage],
         [NSString stringWithFormat:@"excludedOther=%lu", (unsigned long)otherExcluded],
-        [NSString stringWithFormat:@"selected=%lu", (unsigned long)selectedPackageIDs.count],
-        [NSString stringWithFormat:@"importAttemptBuild=%@", currentImportAttempt ? storedImportBuild : @"not-run"],
-        [NSString stringWithFormat:@"importAttemptID=%@", currentImportAttempt ? ([NSUserDefaults.standardUserDefaults stringForKey:ATMLastImportAttemptKey] ?: @"not-run") : @"not-run"],
-        [NSString stringWithFormat:@"importAttemptState=%@", currentImportAttempt ? ([NSUserDefaults.standardUserDefaults stringForKey:ATMLastImportAttemptStateKey] ?: @"not-run") : @"not-run"],
-        [NSString stringWithFormat:@"importStage=%@", currentImportAttempt ? ([NSUserDefaults.standardUserDefaults stringForKey:ATMLastImportStageKey] ?: @"not-run") : @"not-run"],
-        [NSString stringWithFormat:@"importErrorCode=%ld", (long)(currentImportAttempt ? [NSUserDefaults.standardUserDefaults integerForKey:ATMLastImportErrorCodeKey] : 0)],
-        [NSString stringWithFormat:@"restoreCode=%@", currentRestoreCode ? storedRestoreCode : @"not-run"],
-        [NSString stringWithFormat:@"restoreExitCode=%ld", (long)(currentRestoreCode ? [NSUserDefaults.standardUserDefaults integerForKey:ATMLastRestoreExitCodeKey] : -1)],
-        @"restoreDiagnosticPrivacy=fixed-code-and-exit-only",
-        @"privacy=counts-and-stage-flags-only"
+        [NSString stringWithFormat:@"selected=%lu", (unsigned long)selectedPackageIDs.count]
     ] mutableCopy];
+    NSDictionary *failureCounts = [backup[@"captureFailureCounts"] isKindOfClass:NSDictionary.class] ? backup[@"captureFailureCounts"] : @{};
+    [lines addObject:@"[BackupCapture]"];
+    for (NSString *key in ATMBackupCaptureStageKeys()) [lines addObject:[NSString stringWithFormat:@"capture.%@=%@", key, failureCounts[key] ?: @0]];
     BOOL importDebugEnabled = ATMImportDiagnosticsEnabled();
+    [lines addObject:@"[ImportTrace]"];
     [lines addObject:[NSString stringWithFormat:@"importDebugEnabled=%@", importDebugEnabled ? @"yes" : @"no"]];
     if (importDebugEnabled) {
         NSArray *storedTrace = currentImportAttempt ? ([NSUserDefaults.standardUserDefaults arrayForKey:ATMImportTraceKey] ?: @[]) : @[];
@@ -486,10 +607,28 @@ NSURL *ATMWriteDiagnosticReport(ATMEnvironment *environment,
     } else {
         [lines addObject:@"importTrace=disabled"];
     }
-    NSString *contents = [[lines componentsJoinedByString:@"\n"] stringByAppendingString:@"\n"];
-    NSURL *url = [ATMApplicationSupportDirectory() URLByAppendingPathComponent:@"AAZ-Tweak-Manager-Diagnostic.txt"];
-    BOOL written = [contents writeToURL:url atomically:YES encoding:NSUTF8StringEncoding error:error];
+    [lines addObject:@"privacy=counts-and-fixed-stage-labels-only"];
+    return [[lines componentsJoinedByString:@"\n"] stringByAppendingString:@"\n"];
+}
+
+NSURL *ATMWriteUnifiedReport(ATMEnvironment *environment, NSArray<ATMPackageRecord *> *packages, NSSet<NSString *> *selectedPackageIDs, NSError *scanError, NSError **error) {
+    for (NSString *legacyName in @[@"AAZ-Restore-Report.txt", @"AAZ-Backup-Report.txt"]) [NSFileManager.defaultManager removeItemAtPath:[NSTemporaryDirectory() stringByAppendingPathComponent:legacyName] error:nil];
+    NSURL *url = [ATMApplicationSupportDirectory() URLByAppendingPathComponent:@"AAZ-Tweak-Manager-Report.txt"];
+    BOOL written = [ATMUnifiedReportText(environment, packages, selectedPackageIDs, scanError) writeToURL:url atomically:YES encoding:NSUTF8StringEncoding error:error];
     return written ? url : nil;
+}
+
+NSURL *ATMWriteDiagnosticReport(ATMEnvironment *environment, NSArray<ATMPackageRecord *> *packages, NSSet<NSString *> *selectedPackageIDs, NSError *scanError, NSError **error) {
+    return ATMWriteUnifiedReport(environment, packages, selectedPackageIDs, scanError, error);
+}
+
+void ATMClearUnifiedReportState(void) {
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    ATMClearImportDiagnosticTrace();
+    for (NSString *key in @[ATMLastBackupBuildKey, ATMLastBackupSummaryKey, ATMLastRestoreBuildKey, ATMLastRestoreSummaryKey, ATMLastRestoreCodeKey, ATMLastRestoreExitCodeKey]) [defaults removeObjectForKey:key];
+    NSURL *directory = ATMApplicationSupportDirectory();
+    for (NSString *name in @[@"AAZ-Tweak-Manager-Report.txt", @"AAZ-Tweak-Manager-Diagnostic.txt"]) [NSFileManager.defaultManager removeItemAtURL:[directory URLByAppendingPathComponent:name] error:nil];
+    for (NSString *legacyName in @[@"AAZ-Restore-Report.txt", @"AAZ-Backup-Report.txt"]) [NSFileManager.defaultManager removeItemAtPath:[NSTemporaryDirectory() stringByAppendingPathComponent:legacyName] error:nil];
 }
 
 @implementation ATMPersonalLedger

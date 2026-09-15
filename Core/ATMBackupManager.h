@@ -36,6 +36,8 @@ typedef NS_ENUM(NSInteger, ATMBackupErrorCode) {
 - (void)discardPendingImportAtURL:(nullable NSURL *)url;
 - (nullable NSDictionary *)importPackagePayloadFromURL:(NSURL *)sourceURL error:(NSError **)error;
 - (NSUInteger)verifiedPackageVaultCount;
+- (NSUInteger)legacyRestoredSourceFileCount;
+- (nullable NSDictionary *)quarantineLegacyRestoredSources:(NSError **)error;
 - (nullable NSURL *)importBackupFromURL:(NSURL *)sourceURL password:(nullable NSString *)password error:(NSError **)error;
 - (nullable NSDictionary *)compareBackup:(NSURL *)olderURL withBackup:(NSURL *)newerURL error:(NSError **)error;
 - (NSArray<NSDictionary *> *)savedProfiles;

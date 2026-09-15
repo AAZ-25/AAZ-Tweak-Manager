@@ -41,6 +41,86 @@ static const NSUInteger ATMEncryptedTagLength = CC_SHA256_DIGEST_LENGTH;
 
 static NSError *ATMBackupError(NSInteger code, NSString *message) { return [NSError errorWithDomain:ATMBackupErrorDomain code:code userInfo:@{NSLocalizedDescriptionKey: message}]; }
 
+static NSString *ATMValidatedSourceRelativePath(id value, NSString *extension) {
+    if (![value isKindOfClass:NSString.class] || ![@[@"list", @"sources"] containsObject:extension]) return nil;
+    NSString *path = value;
+    if (path.length < 1 || path.length > 256 || [path containsString:@"\\"] || [path containsString:@"\0"] || [path.pathComponents containsObject:@".."]) return nil;
+    if ([path isEqualToString:@"/etc/apt/sources.list"]) return [extension isEqualToString:@"list"] ? path : nil;
+    NSString *allowedPrefix = [path hasPrefix:@"/etc/apt/sources.list.d/"] ? @"/etc/apt/sources.list.d/" : ([path hasPrefix:@"/etc/apt/sileo.list.d/"] ? @"/etc/apt/sileo.list.d/" : nil);
+    NSString *name = path.lastPathComponent;
+    NSString *tail = allowedPrefix.length ? [path substringFromIndex:allowedPrefix.length] : @"";
+    if (!allowedPrefix.length || ![tail isEqualToString:name] || ![path.pathExtension.lowercaseString isEqualToString:extension]) return nil;
+    static NSRegularExpression *expression; static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{ expression = [NSRegularExpression regularExpressionWithPattern:@"^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}\\.(?:list|sources)$" options:0 error:nil]; });
+    return [expression numberOfMatchesInString:name options:0 range:NSMakeRange(0, name.length)] == 1 ? path : nil;
+}
+
+static NSArray<NSString *> *ATMSourceBlocks(NSString *text, NSString *extension, BOOL allowEmpty) {
+    if (![text isKindOfClass:NSString.class] || [text containsString:@"\0"]) return nil;
+    NSString *normalized = [[text stringByReplacingOccurrencesOfString:@"\r\n" withString:@"\n"] stringByReplacingOccurrencesOfString:@"\r" withString:@"\n"];
+    NSMutableArray<NSString *> *blocks = [NSMutableArray array];
+    if ([extension isEqualToString:@"list"]) {
+        for (NSString *line in [normalized componentsSeparatedByString:@"\n"]) {
+            NSString *trimmed = [line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+            if (trimmed.length) [blocks addObject:trimmed];
+        }
+    } else if ([extension isEqualToString:@"sources"]) {
+        NSMutableArray<NSString *> *paragraph = [NSMutableArray array];
+        for (NSString *line in [normalized componentsSeparatedByString:@"\n"]) {
+            NSString *trimmed = [line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+            if (!trimmed.length) {
+                if (paragraph.count) { [blocks addObject:[paragraph componentsJoinedByString:@"\n"]]; [paragraph removeAllObjects]; }
+            } else [paragraph addObject:line];
+        }
+        if (paragraph.count) [blocks addObject:[paragraph componentsJoinedByString:@"\n"]];
+    } else return nil;
+    return blocks.count || allowEmpty ? blocks : nil;
+}
+
+static NSString *ATMSourceBlockKey(NSString *block, NSString *extension) {
+    NSMutableArray<NSString *> *parts = [NSMutableArray array];
+    if ([extension isEqualToString:@"list"]) {
+        for (NSString *part in [block componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]) if (part.length) [parts addObject:part];
+    } else {
+        for (NSString *line in [block componentsSeparatedByString:@"\n"]) {
+            NSString *trimmed = [line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+            if (trimmed.length) [parts addObject:trimmed];
+        }
+    }
+    return [parts componentsJoinedByString:@" "];
+}
+
+static NSData *ATMSourceMergedData(NSData *existingData, NSData *backupData, NSString *extension, BOOL *changed) {
+    NSString *backupText = [[NSString alloc] initWithData:backupData encoding:NSUTF8StringEncoding];
+    NSString *existingText = existingData ? [[NSString alloc] initWithData:existingData encoding:NSUTF8StringEncoding] : @"";
+    NSArray<NSString *> *backupBlocks = ATMSourceBlocks(backupText, extension, NO);
+    NSArray<NSString *> *existingBlocks = ATMSourceBlocks(existingText, extension, YES);
+    if (!backupBlocks || !existingBlocks || existingData.length > 1024 * 1024) return nil;
+    NSMutableArray<NSString *> *missing = [NSMutableArray array]; NSMutableSet<NSString *> *seen = [NSMutableSet set];
+    for (NSString *block in existingBlocks) [seen addObject:ATMSourceBlockKey(block, extension)];
+    for (NSString *block in backupBlocks) { NSString *key = ATMSourceBlockKey(block, extension); if (![seen containsObject:key]) { [seen addObject:key]; [missing addObject:block]; } }
+    BOOL didChange = missing.count > 0;
+    if (!didChange && existingData.length) { if (changed) *changed = NO; return existingData; }
+    NSString *separator = [extension isEqualToString:@"sources"] ? @"\n\n" : @"\n";
+    NSString *base = [existingText stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSString *addition = [missing componentsJoinedByString:separator];
+    NSString *output = base.length ? [NSString stringWithFormat:@"%@%@%@\n", base, separator, addition] : [addition stringByAppendingString:@"\n"];
+    NSData *data = [output dataUsingEncoding:NSUTF8StringEncoding];
+    if (!data.length || data.length > 1024 * 1024) return nil;
+    if (changed) *changed = didChange;
+    return data;
+}
+
+static NSArray<NSString *> *ATMLegacyRestoredSourceNames(ATMEnvironment *environment) {
+    NSString *root = [environment pathInsideRoot:@"/etc/apt/sources.list.d"];
+    NSArray<NSString *> *names = [NSFileManager.defaultManager contentsOfDirectoryAtPath:root error:nil] ?: @[];
+    static NSRegularExpression *expression; static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{ expression = [NSRegularExpression regularExpressionWithPattern:@"^aaztm-[0-9a-f]{16}\\.(?:list|sources)$" options:0 error:nil]; });
+    NSMutableArray<NSString *> *matches = [NSMutableArray array];
+    for (NSString *name in names) if ([expression numberOfMatchesInString:name options:0 range:NSMakeRange(0, name.length)] == 1) [matches addObject:name];
+    return [matches sortedArrayUsingSelector:@selector(compare:)];
+}
+
 static BOOL ATMCopyFileContents(NSURL *sourceURL, NSURL *destinationURL, NSInteger *failureCode) {
     [NSFileManager.defaultManager removeItemAtURL:destinationURL error:nil];
     NSError *copyError = nil;
@@ -399,6 +479,12 @@ static NSData *ATMDecryptArchive(NSData *container, NSString *password, NSError 
 }
 
 @implementation ATMBackupManager
+@synthesize lastBackupAttemptReport = _lastBackupAttemptReport;
+
+- (void)setLastBackupAttemptReport:(NSDictionary *)lastBackupAttemptReport {
+    _lastBackupAttemptReport = [lastBackupAttemptReport copy];
+    ATMStoreBackupReportSummary(_lastBackupAttemptReport);
+}
 - (instancetype)initWithEnvironment:(ATMEnvironment *)environment ledger:(ATMPersonalLedger *)ledger {
     if ((self = [super init])) {
         _environment = environment; _ledger = ledger; _restorePlanner = [[ATMRestorePlanner alloc] initWithEnvironment:environment];
@@ -462,6 +548,37 @@ static NSData *ATMDecryptArchive(NSData *container, NSString *password, NSError 
     return result;
 }
 - (NSUInteger)verifiedPackageVaultCount { return self.verifiedVaultPackagesByIdentity.count; }
+- (NSUInteger)legacyRestoredSourceFileCount { return ATMLegacyRestoredSourceNames(self.environment).count; }
+- (NSDictionary *)quarantineLegacyRestoredSources:(NSError **)error {
+    NSArray<NSString *> *names = ATMLegacyRestoredSourceNames(self.environment);
+    if (!names.count) return @{ @"success": @YES, @"moved": @0 };
+    NSString *mkdir = [self backupExecutableForPaths:@[@"/bin/mkdir", @"/usr/bin/mkdir"]];
+    NSString *move = [self backupExecutableForPaths:@[@"/bin/mv", @"/usr/bin/mv"]];
+    NSString *root = [self.environment pathInsideRoot:@"/etc/apt/sources.list.d"];
+    NSString *quarantine = [root stringByAppendingPathComponent:@".aaztm-disabled"];
+    if (!mkdir.length || !move.length || !root.length || [ATMRunBackupToolWithPrivilege(mkdir, @[@"-p", @"--", quarantine], YES, nil)[@"exitCode"] integerValue] != 0) {
+        if (error) *error = ATMBackupError(86, @"The legacy Source quarantine could not be prepared.");
+        return nil;
+    }
+    struct stat status; if (lstat(quarantine.fileSystemRepresentation, &status) != 0 || !S_ISDIR(status.st_mode) || S_ISLNK(status.st_mode)) {
+        if (error) *error = ATMBackupError(86, @"The legacy Source quarantine did not pass its directory safety check.");
+        return nil;
+    }
+    NSUInteger movedCount = 0;
+    for (NSString *name in names) {
+        NSString *source = [root stringByAppendingPathComponent:name];
+        NSString *destination = [quarantine stringByAppendingPathComponent:name];
+        if ([NSFileManager.defaultManager fileExistsAtPath:destination]) destination = [quarantine stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.%@.disabled", name, NSUUID.UUID.UUIDString]];
+        NSDictionary *result = ATMRunBackupToolWithPrivilege(move, @[@"--", source, destination], YES, nil);
+        if ([result[@"exitCode"] integerValue] != 0 || [NSFileManager.defaultManager fileExistsAtPath:source] || ![NSFileManager.defaultManager fileExistsAtPath:destination]) {
+            if (error) *error = ATMBackupError(87, @"A legacy restored Source could not be moved safely. Files already quarantined were kept for recovery.");
+            return nil;
+        }
+        movedCount++;
+    }
+    [self.ledger recordEvent:@"legacy-sources-quarantined" packageID:nil details:@{ @"count": @(movedCount) }];
+    return @{ @"success": @YES, @"moved": @(movedCount) };
+}
 - (NSDictionary *)importPackagePayloadFromURL:(NSURL *)sourceURL error:(NSError **)error {
     NSDictionary *payload = ATMValidatedBackupPayload(self.environment, sourceURL);
     if (!payload) { if (error) *error = ATMBackupError(79, @"This file is not a supported, safe Rootless package DEB."); return nil; }
@@ -965,22 +1082,24 @@ static NSData *ATMDecryptArchive(NSData *container, NSString *password, NSError 
         payloads[identity] = @{ @"url": destination, @"stagingRoot": staging, @"sha256": sha };
         totalBytes += size;
     }
-    NSUInteger sourceIndex = 0, expectedRestorableSources = 0;
+    NSUInteger sourceIndex = 0, expectedRestorableSources = 0; NSMutableSet<NSString *> *sourceDestinations = [NSMutableSet set];
     for (NSDictionary *source in manifest[@"sources"] ?: @[]) {
         if (![source isKindOfClass:NSDictionary.class] || ![source[@"restorable"] boolValue]) continue;
         expectedRestorableSources++;
         NSString *path = [source[@"backupPath"] isKindOfClass:NSString.class] ? source[@"backupPath"] : @"";
         NSString *sha = [source[@"sha256"] isKindOfClass:NSString.class] ? [source[@"sha256"] lowercaseString] : @"";
         NSString *extension = path.pathExtension.lowercaseString; unsigned long long size = entrySizes[path].unsignedLongLongValue;
+        NSString *relativePath = ATMValidatedSourceRelativePath(source[@"path"], extension);
         BOOL safePath = [path hasPrefix:@"sources/"] && ![path containsString:@".."] && ![path containsString:@"\\"] && [@[@"list", @"sources"] containsObject:extension];
         BOOL safeHash = sha.length == 64 && [sha rangeOfCharacterFromSet:[[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdef"] invertedSet]].location == NSNotFound;
-        if (!safePath || !safeHash || size == 0 || size > 128ULL * 1024ULL) continue;
+        if (!safePath || !safeHash || !relativePath.length || [sourceDestinations containsObject:relativePath] || size == 0 || size > 128ULL * 1024ULL) continue;
         NSData *data = ATMReadStoredZipEntry(readable, path, nil);
         NSString *text = data ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : nil;
         if (!text.length || data.length != size || ![ATMSHA256ForData(data).lowercaseString isEqualToString:sha] || [text containsString:@"\0"] || [text rangeOfString:@"://[^/\\s]+@" options:NSRegularExpressionSearch].location != NSNotFound) continue;
         NSURL *destination = [staging URLByAppendingPathComponent:[NSString stringWithFormat:@"source-%03lu.%@", (unsigned long)sourceIndex++, extension]];
         if (![data writeToURL:destination options:NSDataWritingAtomic error:nil]) continue;
-        [sourcePayloads addObject:@{ @"url": destination, @"sha256": sha, @"extension": extension }];
+        [sourceDestinations addObject:relativePath];
+        [sourcePayloads addObject:@{ @"url": destination, @"sha256": sha, @"extension": extension, @"relativePath": relativePath }];
     }
     if (sourcePayloads.count != expectedRestorableSources) {
         if (error) *error = ATMBackupError(84, @"A restorable source payload failed its integrity or privacy validation.");
@@ -1135,36 +1254,38 @@ static NSData *ATMDecryptArchive(NSData *container, NSString *password, NSError 
 }
 - (NSDictionary *)compareBackup:(NSURL *)olderURL withBackup:(NSURL *)newerURL error:(NSError **)error { NSDictionary *oldReport = [self backupReportForURL:olderURL password:nil error:error], *newReport = oldReport ? [self backupReportForURL:newerURL password:nil error:error] : nil; NSDictionary *older = oldReport[@"manifest"], *newer = newReport[@"manifest"]; if (!older || !newer) return nil; NSMutableDictionary *oldVersions = [NSMutableDictionary dictionary], *newVersions = [NSMutableDictionary dictionary]; for (NSDictionary *package in older[@"packages"]) if ([package[@"packageID"] isKindOfClass:NSString.class]) oldVersions[package[@"packageID"]] = package[@"version"] ?: @""; for (NSDictionary *package in newer[@"packages"]) if ([package[@"packageID"] isKindOfClass:NSString.class]) newVersions[package[@"packageID"]] = package[@"version"] ?: @""; NSUInteger added = 0, removed = 0, updated = 0, unchanged = 0; for (NSString *packageID in newVersions) { if (!oldVersions[packageID]) added++; else if (![oldVersions[packageID] isEqualToString:newVersions[packageID]]) updated++; else unchanged++; } for (NSString *packageID in oldVersions) if (!newVersions[packageID]) removed++; return @{ @"added": @(added), @"removed": @(removed), @"updated": @(updated), @"unchanged": @(unchanged) }; }
 - (NSDictionary *)sourceRestoreReadiness {
-    if (!self.restoreSourcePayloads.count) return @{ @"success": @YES, @"pending": @0, @"present": @0, @"snapshot": @{ @"rootPresent": @NO, @"items": @[] } };
+    if (!self.restoreSourcePayloads.count) return @{ @"success": @YES, @"pending": @0, @"present": @0, @"snapshot": @{ @"items": @[] } };
     NSString *test = [self backupExecutableForPaths:@[@"/usr/bin/test", @"/bin/test"]];
     NSString *mkdir = [self backupExecutableForPaths:@[@"/bin/mkdir", @"/usr/bin/mkdir"]];
     NSString *install = [self backupExecutableForPaths:@[@"/usr/bin/install", @"/bin/install"]];
     NSString *move = [self backupExecutableForPaths:@[@"/bin/mv", @"/usr/bin/mv"]];
     NSString *remove = [self backupExecutableForPaths:@[@"/bin/rm", @"/usr/bin/rm"]];
-    NSString *destinationRoot = [self.environment pathInsideRoot:@"/etc/apt/sources.list.d"];
     BOOL toolsReady = test.length && mkdir.length && install.length && move.length && remove.length;
-    BOOL rootPresent = destinationRoot.length && [ATMRunBackupToolWithPrivilege(test, @[@"-d", destinationRoot], YES, nil)[@"exitCode"] integerValue] == 0;
-    NSString *destinationParent = destinationRoot.stringByDeletingLastPathComponent;
-    BOOL rootReady = rootPresent ? [ATMRunBackupToolWithPrivilege(test, @[@"-w", destinationRoot], YES, nil)[@"exitCode"] integerValue] == 0 :
-        (destinationParent.length && [ATMRunBackupToolWithPrivilege(test, @[@"-d", destinationParent], YES, nil)[@"exitCode"] integerValue] == 0 && [ATMRunBackupToolWithPrivilege(test, @[@"-w", destinationParent], YES, nil)[@"exitCode"] integerValue] == 0);
-    if (!toolsReady || !rootReady) return @{ @"success": @NO, @"pending": @0, @"present": @0, @"snapshot": @{} };
+    if (!toolsReady) return @{ @"success": @NO, @"pending": @0, @"present": @0, @"snapshot": @{} };
     NSMutableArray *snapshot = [NSMutableArray array]; NSUInteger pending = 0, present = 0;
     for (NSDictionary *descriptor in self.restoreSourcePayloads) {
-        NSURL *url = descriptor[@"url"]; NSString *sha = [descriptor[@"sha256"] lowercaseString], *extension = descriptor[@"extension"];
+        NSURL *url = descriptor[@"url"]; NSString *sha = [descriptor[@"sha256"] lowercaseString], *extension = descriptor[@"extension"], *relativePath = descriptor[@"relativePath"];
         NSString *rootPath = self.restoreStagingDirectory.URLByStandardizingPath.path, *filePath = url.URLByStandardizingPath.path;
         BOOL insideStaging = rootPath.length && [filePath hasPrefix:[rootPath stringByAppendingString:@"/"]];
-        if (!insideStaging || sha.length != 64 || ![@[@"list", @"sources"] containsObject:extension] || ![ATMSHA256ForFile(url, nil).lowercaseString isEqualToString:sha]) return @{ @"success": @NO, @"pending": @0, @"present": @0, @"snapshot": @{} };
-        NSString *name = [NSString stringWithFormat:@"aaztm-%@.%@", [sha substringToIndex:16], extension];
-        NSString *destination = [destinationRoot stringByAppendingPathComponent:name];
+        NSString *validatedPath = ATMValidatedSourceRelativePath(relativePath, extension);
+        NSString *destination = validatedPath.length ? [self.environment pathInsideRoot:validatedPath] : nil;
+        NSString *destinationParent = destination.stringByDeletingLastPathComponent;
+        struct stat parentStatus; BOOL parentIsContainedDirectory = destinationParent.length && lstat(destinationParent.fileSystemRepresentation, &parentStatus) == 0 && S_ISDIR(parentStatus.st_mode) && !S_ISLNK(parentStatus.st_mode);
+        BOOL parentReady = parentIsContainedDirectory && [ATMRunBackupToolWithPrivilege(test, @[@"-d", destinationParent], YES, nil)[@"exitCode"] integerValue] == 0 && [ATMRunBackupToolWithPrivilege(test, @[@"-w", destinationParent], YES, nil)[@"exitCode"] integerValue] == 0;
+        if (!insideStaging || !destination.length || !parentReady || sha.length != 64 || ![ATMSHA256ForFile(url, nil).lowercaseString isEqualToString:sha]) return @{ @"success": @NO, @"pending": @0, @"present": @0, @"snapshot": @{} };
         struct stat status; BOOL exists = lstat(destination.fileSystemRepresentation, &status) == 0;
-        NSString *state = @"pending";
-        if (exists) {
-            if (!S_ISREG(status.st_mode) || ![ATMSHA256ForFile([NSURL fileURLWithPath:destination], nil).lowercaseString isEqualToString:sha]) return @{ @"success": @NO, @"pending": @0, @"present": @0, @"snapshot": @{} };
-            state = @"present"; present++;
-        } else pending++;
-        [snapshot addObject:@{ @"sha256": sha, @"extension": extension, @"state": state }];
+        if (exists && !S_ISREG(status.st_mode)) return @{ @"success": @NO, @"pending": @0, @"present": @0, @"snapshot": @{} };
+        NSData *backupData = [NSData dataWithContentsOfURL:url options:NSDataReadingMappedIfSafe error:nil];
+        NSData *existingData = exists ? [NSData dataWithContentsOfFile:destination options:NSDataReadingMappedIfSafe error:nil] : nil;
+        if (!backupData || (exists && !existingData)) return @{ @"success": @NO, @"pending": @0, @"present": @0, @"snapshot": @{} };
+        BOOL changed = NO; NSData *mergedData = ATMSourceMergedData(existingData, backupData, extension, &changed);
+        if (!mergedData) return @{ @"success": @NO, @"pending": @0, @"present": @0, @"snapshot": @{} };
+        NSString *beforeHash = exists ? ATMSHA256ForData(existingData).lowercaseString : @"absent";
+        NSString *mergedHash = ATMSHA256ForData(mergedData).lowercaseString;
+        NSString *state = changed ? @"pending" : @"present"; if (changed) pending++; else present++;
+        [snapshot addObject:@{ @"sha256": sha, @"extension": extension, @"relativePath": relativePath, @"beforeHash": beforeHash, @"mergedHash": mergedHash, @"state": state }];
     }
-    return @{ @"success": @YES, @"pending": @(pending), @"present": @(present), @"snapshot": @{ @"rootPresent": @(rootPresent), @"items": snapshot } };
+    return @{ @"success": @YES, @"pending": @(pending), @"present": @(present), @"snapshot": @{ @"items": snapshot } };
 }
 - (NSDictionary *)restoreReadinessForBackupURL:(NSURL *)backupURL password:(NSString *)password installedPackages:(NSArray<ATMPackageRecord *> *)installed error:(NSError **)error {
     ATMSetRestoreDiagnosticState(@"R40-READINESS", -1);
@@ -1178,49 +1299,73 @@ static NSData *ATMDecryptArchive(NSData *container, NSString *password, NSError 
     BOOL sourceReady = [sourcePlan[@"success"] boolValue]; NSUInteger sourcesPending = [sourcePlan[@"pending"] unsignedIntegerValue];
     NSUInteger blocked = [plan[@"blocked"] unsignedIntegerValue] + (sourceReady ? 0 : 1);
     BOOL safe = [plan[@"simulationPassed"] boolValue] && blocked == 0 && ([plan[@"executionRequests"] count] > 0 || sourcesPending > 0);
+    BOOL noChangesNeeded = sourceReady && [plan[@"simulationPassed"] boolValue] && blocked == 0 && ![plan[@"executionRequests"] count] && sourcesPending == 0;
     sessionPlan[@"restoreSessionID"] = self.restoreSessionID; sessionPlan[@"sourcesToRestore"] = @(sourcesPending); sessionPlan[@"sourcesAlreadyPresent"] = sourcePlan[@"present"] ?: @0; sessionPlan[@"privateSourcesSkipped"] = @(privateSourcesSkipped);
     sessionPlan[@"blocked"] = @(blocked); sessionPlan[@"prerequisiteFailures"] = @([plan[@"prerequisiteFailures"] unsignedIntegerValue] + (sourceReady ? 0 : 1)); sessionPlan[@"safeToExecute"] = @(safe);
+    sessionPlan[@"noChangesNeeded"] = @(noChangesNeeded);
     sessionPlan[@"packageExecutionSnapshot"] = plan[@"executionSnapshot"] ?: @{};
     sessionPlan[@"executionSnapshot"] = @{ @"packages": plan[@"executionSnapshot"] ?: @{}, @"sources": sourcePlan[@"snapshot"] ?: @[] };
     if (!sourceReady) sessionPlan[@"reason"] = @"The sanitized source destinations could not be verified safely.";
     else if (sourcesPending > 0 && ![plan[@"executionRequests"] count]) sessionPlan[@"reason"] = @"The package state is already satisfied and sanitized public sources are ready to restore.";
     else if (!safe && ![plan[@"executionRequests"] count] && sourcesPending == 0) sessionPlan[@"reason"] = @"All package and sanitized source state already matches this backup.";
-    ATMSetRestoreDiagnosticState(safe ? @"R40-READY" : @"R40-BLOCKED", [plan[@"aptExitCode"] integerValue]);
+    ATMSetRestoreDiagnosticState(safe ? @"R40-READY" : (noChangesNeeded ? @"R40-NOOP" : @"R40-BLOCKED"), [plan[@"aptExitCode"] integerValue]);
     return sessionPlan;
 }
 
-- (NSDictionary *)restoreSanitizedSources {
+- (NSDictionary *)restoreSanitizedSourcesWithExpectedSnapshot:(NSDictionary *)expectedSnapshot {
     if (!self.restoreSourcePayloads.count) return @{ @"success": @YES, @"restored": @0 };
     NSString *mkdir = [self backupExecutableForPaths:@[@"/bin/mkdir", @"/usr/bin/mkdir"]];
     NSString *install = [self backupExecutableForPaths:@[@"/usr/bin/install", @"/bin/install"]];
     NSString *move = [self backupExecutableForPaths:@[@"/bin/mv", @"/usr/bin/mv"]];
     NSString *remove = [self backupExecutableForPaths:@[@"/bin/rm", @"/usr/bin/rm"]];
-    NSString *destinationRoot = [self.environment pathInsideRoot:@"/etc/apt/sources.list.d"];
-    if (!mkdir.length || !install.length || !move.length || !remove.length || !destinationRoot.length || [ATMRunBackupToolWithPrivilege(mkdir, @[@"-p", destinationRoot], YES, nil)[@"exitCode"] integerValue] != 0) return @{ @"success": @NO, @"restored": @0 };
-    struct stat rootStatus; if (lstat(destinationRoot.fileSystemRepresentation, &rootStatus) != 0 || !S_ISDIR(rootStatus.st_mode)) return @{ @"success": @NO, @"restored": @0 };
-    NSMutableArray<NSString *> *created = [NSMutableArray array]; NSUInteger restored = 0; BOOL failed = NO;
+    if (!mkdir.length || !install.length || !move.length || !remove.length) return @{ @"success": @NO, @"restored": @0 };
+    NSArray<NSDictionary *> *expectedItems = [expectedSnapshot[@"items"] isKindOfClass:NSArray.class] ? expectedSnapshot[@"items"] : nil;
+    if (expectedItems.count != self.restoreSourcePayloads.count) return @{ @"success": @NO, @"restored": @0, @"snapshotFailure": @YES };
+    NSMutableArray<NSDictionary *> *written = [NSMutableArray array]; NSUInteger restored = 0; BOOL failed = NO, snapshotFailure = NO; NSUInteger sourceIndex = 0;
     for (NSDictionary *descriptor in self.restoreSourcePayloads) {
-        NSURL *url = descriptor[@"url"]; NSString *sha = descriptor[@"sha256"], *extension = descriptor[@"extension"];
+        NSDictionary *expectedItem = expectedItems[sourceIndex++];
+        NSURL *url = descriptor[@"url"]; NSString *sha = descriptor[@"sha256"], *extension = descriptor[@"extension"], *relativePath = descriptor[@"relativePath"];
         NSString *rootPath = self.restoreStagingDirectory.URLByStandardizingPath.path, *filePath = url.URLByStandardizingPath.path;
         BOOL insideStaging = rootPath.length && [filePath hasPrefix:[rootPath stringByAppendingString:@"/"]];
-        if (!insideStaging || ![@[@"list", @"sources"] containsObject:extension] || ![ATMSHA256ForFile(url, nil).lowercaseString isEqualToString:sha]) { failed = YES; break; }
-        NSString *name = [NSString stringWithFormat:@"aaztm-%@.%@", [sha substringToIndex:16], extension];
-        NSString *destination = [destinationRoot stringByAppendingPathComponent:name];
+        NSString *validatedPath = ATMValidatedSourceRelativePath(relativePath, extension);
+        NSString *destination = validatedPath.length ? [self.environment pathInsideRoot:validatedPath] : nil;
+        if (!insideStaging || !destination.length || ![ATMSHA256ForFile(url, nil).lowercaseString isEqualToString:sha]) { failed = YES; break; }
         struct stat destinationStatus; BOOL destinationExists = lstat(destination.fileSystemRepresentation, &destinationStatus) == 0;
-        if (destinationExists) {
-            if (!S_ISREG(destinationStatus.st_mode) || ![ATMSHA256ForFile([NSURL fileURLWithPath:destination], nil).lowercaseString isEqualToString:sha]) { failed = YES; break; }
-            continue;
-        }
+        if (destinationExists && !S_ISREG(destinationStatus.st_mode)) { failed = YES; break; }
+        NSData *backupData = [NSData dataWithContentsOfURL:url options:NSDataReadingMappedIfSafe error:nil];
+        NSData *existingData = destinationExists ? [NSData dataWithContentsOfFile:destination options:NSDataReadingMappedIfSafe error:nil] : nil;
+        BOOL changed = NO; NSData *mergedData = backupData && (!destinationExists || existingData) ? ATMSourceMergedData(existingData, backupData, extension, &changed) : nil;
+        if (!mergedData) { failed = YES; break; }
+        NSString *beforeHash = destinationExists ? ATMSHA256ForData(existingData).lowercaseString : @"absent";
+        NSString *mergedHash = ATMSHA256ForData(mergedData).lowercaseString;
+        NSString *state = changed ? @"pending" : @"present";
+        BOOL snapshotMatches = [expectedItem[@"relativePath"] isEqualToString:relativePath] && [expectedItem[@"sha256"] isEqualToString:sha] && [expectedItem[@"beforeHash"] isEqualToString:beforeHash] && [expectedItem[@"mergedHash"] isEqualToString:mergedHash] && [expectedItem[@"state"] isEqualToString:state];
+        if (!snapshotMatches) { failed = YES; snapshotFailure = YES; break; }
+        if (!changed) continue;
+        NSString *destinationParent = destination.stringByDeletingLastPathComponent;
+        struct stat parentStatus; BOOL parentSafe = lstat(destinationParent.fileSystemRepresentation, &parentStatus) == 0 && S_ISDIR(parentStatus.st_mode) && !S_ISLNK(parentStatus.st_mode);
+        if (!parentSafe || [ATMRunBackupToolWithPrivilege(mkdir, @[@"-p", @"--", destinationParent], YES, nil)[@"exitCode"] integerValue] != 0) { failed = YES; break; }
+        NSURL *mergedURL = [self.restoreStagingDirectory URLByAppendingPathComponent:[NSString stringWithFormat:@"merged-%@", NSUUID.UUID.UUIDString]];
+        NSURL *rollbackURL = destinationExists ? [self.restoreStagingDirectory URLByAppendingPathComponent:[NSString stringWithFormat:@"rollback-%@", NSUUID.UUID.UUIDString]] : nil;
+        if (![mergedData writeToURL:mergedURL options:NSDataWritingAtomic error:nil] || (rollbackURL && ![existingData writeToURL:rollbackURL options:NSDataWritingAtomic error:nil])) { failed = YES; break; }
         NSString *partial = [destination stringByAppendingFormat:@".%@.partial", NSUUID.UUID.UUIDString];
-        NSDictionary *installed = ATMRunBackupToolWithPrivilege(install, @[@"-o", @"0", @"-g", @"0", @"-m", @"0644", filePath, partial], YES, nil);
-        NSDictionary *moved = [installed[@"exitCode"] integerValue] == 0 && [ATMSHA256ForFile([NSURL fileURLWithPath:partial], nil).lowercaseString isEqualToString:sha] ? ATMRunBackupToolWithPrivilege(move, @[@"-n", @"--", partial, destination], YES, nil) : nil;
-        BOOL moveVerified = [moved[@"exitCode"] integerValue] == 0 && ![NSFileManager.defaultManager fileExistsAtPath:partial] && [ATMSHA256ForFile([NSURL fileURLWithPath:destination], nil).lowercaseString isEqualToString:sha];
+        NSDictionary *installed = ATMRunBackupToolWithPrivilege(install, @[@"-o", @"0", @"-g", @"0", @"-m", @"0644", mergedURL.path, partial], YES, nil);
+        NSDictionary *moved = [installed[@"exitCode"] integerValue] == 0 && [ATMSHA256ForFile([NSURL fileURLWithPath:partial], nil).lowercaseString isEqualToString:mergedHash] ? ATMRunBackupToolWithPrivilege(move, @[@"-f", @"--", partial, destination], YES, nil) : nil;
+        BOOL moveVerified = [moved[@"exitCode"] integerValue] == 0 && ![NSFileManager.defaultManager fileExistsAtPath:partial] && [ATMSHA256ForFile([NSURL fileURLWithPath:destination], nil).lowercaseString isEqualToString:mergedHash];
         if (!moveVerified) { ATMRunBackupToolWithPrivilege(remove, @[@"-f", @"--", partial], YES, nil); failed = YES; break; }
-        [created addObject:destination]; restored++;
+        [written addObject:@{ @"destination": destination, @"rollback": rollbackURL ?: NSNull.null }]; restored++;
     }
     if (!failed) return @{ @"success": @YES, @"restored": @(restored) };
-    for (NSString *path in created) ATMRunBackupToolWithPrivilege(remove, @[@"-f", @"--", path], YES, nil);
-    return @{ @"success": @NO, @"restored": @0 };
+    for (NSDictionary *item in written.reverseObjectEnumerator) {
+        NSString *destination = item[@"destination"]; id rollback = item[@"rollback"];
+        if ([rollback isKindOfClass:NSURL.class]) {
+            NSString *partial = [destination stringByAppendingFormat:@".%@.rollback", NSUUID.UUID.UUIDString];
+            NSDictionary *installed = ATMRunBackupToolWithPrivilege(install, @[@"-o", @"0", @"-g", @"0", @"-m", @"0644", [rollback path], partial], YES, nil);
+            if ([installed[@"exitCode"] integerValue] == 0) ATMRunBackupToolWithPrivilege(move, @[@"-f", @"--", partial, destination], YES, nil);
+            else ATMRunBackupToolWithPrivilege(remove, @[@"-f", @"--", partial], YES, nil);
+        } else ATMRunBackupToolWithPrivilege(remove, @[@"-f", @"--", destination], YES, nil);
+    }
+    return @{ @"success": @NO, @"restored": @0, @"snapshotFailure": @(snapshotFailure) };
 }
 
 - (NSDictionary *)executeRestoreForManifest:(NSDictionary *)manifest expectedPlan:(NSDictionary *)expectedPlan error:(NSError **)error {
@@ -1232,9 +1377,9 @@ static NSData *ATMDecryptArchive(NSData *container, NSString *password, NSError 
     if (!sourcesStable) { if (error) *error = ATMBackupError(85, @"The sanitized source state changed after confirmation. Run the readiness check again."); ATMSetRestoreDiagnosticState(@"R40-SOURCE-PREFLIGHT", 85); [self clearRestoreSession]; return nil; }
     NSDictionary *result = [self.restorePlanner executeManifest:manifest expectedPlan:expectedPlan exactPayloads:self.restorePayloads error:error];
     if ([result[@"success"] boolValue]) {
-        NSDictionary *sourceResult = [self restoreSanitizedSources]; NSMutableDictionary *combined = [result mutableCopy];
+        NSDictionary *sourceResult = [self restoreSanitizedSourcesWithExpectedSnapshot:expectedPlan[@"executionSnapshot"][@"sources"]]; NSMutableDictionary *combined = [result mutableCopy];
         combined[@"sourcesRestored"] = sourceResult[@"restored"] ?: @0; combined[@"sourcesChanged"] = @([sourceResult[@"restored"] unsignedIntegerValue] > 0); combined[@"privateSourcesSkipped"] = expectedPlan[@"privateSourcesSkipped"] ?: @0;
-        if (![sourceResult[@"success"] boolValue]) { combined[@"success"] = @NO; combined[@"restoreCode"] = @"R40-SOURCE-RESTORE"; combined[@"reason"] = @"Packages were restored, but the sanitized repository sources could not be written safely."; }
+        if (![sourceResult[@"success"] boolValue]) { BOOL sourceDrift = [sourceResult[@"snapshotFailure"] boolValue]; combined[@"success"] = @NO; combined[@"restoreCode"] = sourceDrift ? @"R40-SOURCE-PREFLIGHT" : @"R40-SOURCE-RESTORE"; combined[@"reason"] = sourceDrift ? @"The sanitized Source state changed before it could be written. Run the readiness check again." : @"Packages were restored, but the sanitized repository sources could not be written safely."; }
         else if (![expectedPlan[@"executionRequests"] count] && [sourceResult[@"restored"] unsignedIntegerValue] > 0) { combined[@"restoreCode"] = @"R40-SOURCE-OK"; combined[@"reason"] = @"Sanitized public sources were restored and verified; no package change was required."; }
         result = combined;
     }

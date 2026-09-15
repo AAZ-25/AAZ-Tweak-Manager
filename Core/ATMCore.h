@@ -63,6 +63,22 @@ FOUNDATION_EXPORT void ATMPopImportDiagnosticSuppression(void);
 FOUNDATION_EXPORT void ATMRecordImportDiagnosticEvent(NSString *stage);
 FOUNDATION_EXPORT void ATMSetImportDiagnosticState(NSString *stage, NSInteger code);
 FOUNDATION_EXPORT void ATMSetRestoreDiagnosticState(NSString *code, NSInteger exitCode);
+FOUNDATION_EXPORT NSArray<NSString *> *ATMBackupCaptureStageKeys(void);
+FOUNDATION_EXPORT void ATMStoreBackupReportSummary(NSDictionary * _Nullable report);
+FOUNDATION_EXPORT void ATMStoreRestoreReportSummary(NSDictionary * _Nullable plan,
+                                                     NSDictionary * _Nullable result,
+                                                     NSError * _Nullable failure);
+FOUNDATION_EXPORT NSDictionary<NSString *, NSString *> *ATMUnifiedReportSnapshot(void);
+FOUNDATION_EXPORT NSString *ATMUnifiedReportText(ATMEnvironment *environment,
+                                                  NSArray<ATMPackageRecord *> *packages,
+                                                  NSSet<NSString *> *selectedPackageIDs,
+                                                  NSError * _Nullable scanError);
+FOUNDATION_EXPORT NSURL * _Nullable ATMWriteUnifiedReport(ATMEnvironment *environment,
+                                                           NSArray<ATMPackageRecord *> *packages,
+                                                           NSSet<NSString *> *selectedPackageIDs,
+                                                           NSError * _Nullable scanError,
+                                                           NSError **error);
+FOUNDATION_EXPORT void ATMClearUnifiedReportState(void);
 
 FOUNDATION_EXPORT NSURL * _Nullable ATMWriteDiagnosticReport(ATMEnvironment *environment,
                                                               NSArray<ATMPackageRecord *> *packages,

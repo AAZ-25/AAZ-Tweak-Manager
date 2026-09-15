@@ -32,7 +32,7 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "51"
+assert info["CFBundleVersion"] == "52"
 assert info["LSSupportsOpeningDocumentsInPlace"] is False
 assert "CFBundleDocumentTypes" not in info
 
@@ -52,7 +52,7 @@ assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["Ap
 with (ROOT / "Extension/Resources/Info.plist").open("rb") as handle:
     extension_info = plistlib.load(handle)
 assert extension_info["CFBundleIdentifier"] == "com.aaz.tweakmanager.importer"
-assert extension_info["CFBundleVersion"] == "51"
+assert extension_info["CFBundleVersion"] == "52"
 assert extension_info["CFBundlePackageType"] == "XPC!"
 extension_definition = extension_info["NSExtension"]
 assert extension_definition["NSExtensionPointIdentifier"] == "com.apple.share-services"
@@ -70,7 +70,7 @@ assert extension_entitlements == {
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta51" in control
+assert "Version: 0.1.0~beta52" in control
 assert "Priority: optional" in control
 assert "Depends: firmware (>= 15.0), coreutils, diffutils, dpkg, tar" in control
 
@@ -100,8 +100,8 @@ assert '@"restoreExecutionIncluded": @NO' in all_text
 assert "credentials-redacted" in all_text
 assert 'record.essential = essentialValue.length > 0 &&' in all_text
 assert 'record.essential = [fields[@"Essential"]' not in all_text
-assert "privacy=counts-and-stage-flags-only" in all_text
-assert "AAZ-Tweak-Manager-Diagnostic.txt" in all_text
+assert "privacy=counts-and-fixed-stage-labels-only" in all_text
+assert "AAZ-Tweak-Manager-Report.txt" in all_text
 assert "fixed-stage-labels-only" in all_text
 assert "Select All" in all_text
 assert "Unselect All" in all_text
@@ -286,7 +286,8 @@ assert 'result[@"output"]' not in view_controller_text
 assert "Restore code:" in view_controller_text
 assert "Package-manager exit:" in view_controller_text
 assert "ATMSetRestoreDiagnosticState" in all_text
-assert "restoreDiagnosticPrivacy=fixed-code-and-exit-only" in (ROOT / "Core/ATMCore.m").read_text()
+assert "ATMLastRestoreBuildV2" in (ROOT / "Core/ATMCore.m").read_text()
+assert "privacy=counts-and-fixed-stage-labels-only" in (ROOT / "Core/ATMCore.m").read_text()
 assert "No packages or sources were changed." in view_controller_text
 assert "ATMRestoreReadinessController" in view_controller_text
 assert "restorePreviewForBackup" not in all_text
@@ -333,12 +334,12 @@ for required_automatic_capture_guard in (
     '@"--listfiles"', '@"--control-list"', '@"--control-show"', '@"md5sums"', '@"--verify"', '@"-x"', '@"--build"', '@"verified-repack"',
     'repackInventoryForRecord', 'rootedMatches == listedPaths.count', 'S_ISDIR(info.st_mode)',
     '@"supportingDependency"', '@"/var/mobile"', '@"/Library/Preferences"',
-    'restoreSanitizedSources', '@"R40-SOURCE-RESTORE"', '@"sourcesToRestore"',
-    '@"privateSourcesSkipped"', '@"aaztm-%@.%@"', 'entry[@"restorable"] = @(!source.credentialsRedacted)',
+    'restoreSanitizedSourcesWithExpectedSnapshot', '@"R40-SOURCE-RESTORE"', '@"sourcesToRestore"',
+    '@"privateSourcesSkipped"', 'entry[@"restorable"] = @(!source.credentialsRedacted)',
 ):
     assert required_automatic_capture_guard in all_text, f"missing automatic capture guard: {required_automatic_capture_guard}"
 assert "dpkg-repack" not in control
-assert 'currentRestoreCode = [storedRestoreCode hasPrefix:@"R40-"]' in (ROOT / "Core/ATMCore.m").read_text()
+assert '[[defaults stringForKey:ATMLastRestoreBuildKey] isEqualToString:currentBuild]' in (ROOT / "Core/ATMCore.m").read_text()
 assert 'ATMProtectedPackageIDs() containsObject:packageID.lowercaseString' in backup_manager_text
 assert 'isPendingPackagePayloadURL' in all_text
 assert "filenames, paths, providers, passwords, or archive contents" in all_text
@@ -389,7 +390,7 @@ assert 'if (S_ISREG(sourceInfo.st_mode)) {' in backup_manager_text
 assert 'if ((sourceInfo.st_mode & 07777) != (stagedInfo.st_mode & 07777)) return @"mode";' in backup_manager_text
 assert 'return @"symlink";' in backup_manager_text
 assert '@[@"enumeration", @"unexpected-directory", @"unexpected-entry", @"missing-entry", @"source", @"type", @"mode", @"size", @"content", @"symlink"]' in backup_manager_text
-assert 'verificationPrefixes = @[@"preflight-direct-copy-verify", @"preflight-fallback-verify", @"preflight-payload-verify", @"direct-copy-verify", @"archive-fallback-verify", @"package-payload-verify"]' in all_text
+assert 'prefixes = @[@"preflight-direct-copy-verify", @"preflight-fallback-verify", @"preflight-payload-verify", @"direct-copy-verify", @"archive-fallback-verify", @"package-payload-verify"]' in all_text
 assert '@"preflight-warning"' in all_text
 assert '@"stages": observedStages' in backup_manager_text
 assert 'preflight-direct-' in backup_manager_text
@@ -402,7 +403,7 @@ assert '@"preflight-restore-dry-run"' in all_text
 assert 'if (embeddedOnly ? !dpkg.length : !aptGet.length)' in restore_planner_text
 assert '@"/usr/bin/true"' not in backup_manager_text
 assert 'cancelCurrentBackup' in all_text
-assert 'Share Privacy-Safe Report' in all_text
+assert 'Open Reports' in all_text
 assert 'hasAttemptWarnings' in all_text
 assert '(!portable || hasAttemptWarnings)' in all_text
 assert 'hasCaptureWarnings' in all_text
@@ -420,10 +421,10 @@ assert 'sourceHashFailureCount' in all_text
 assert 'archive-validation-failed' not in all_text
 assert 'package-hash-failed' in all_text
 assert 'source-hash-failed' in all_text
-assert 'Privacy-Safe Report' in all_text
+assert 'CURRENT BUILD REPORT' in all_text
 assert 'privacy=counts-and-fixed-stage-labels-only' in all_text
 
-# Beta 51 is one complete workflow correction, not a diagnostic-only release.
+# Beta 52 keeps one current-build report rather than separate report files.
 for required_import_freshness in (
     "ATMBeginImportDiagnosticAttempt", "ATMLastImportBuildV2", "ATMLastImportAttemptV2",
     "ATMLastImportAttemptStateV2", "currentImportAttempt", 'importAttemptBuild=%@',
@@ -459,6 +460,7 @@ for required_source_only_guard in (
     '@"sources": sourcePlan[@"snapshot"]', 'sourcesPending > 0',
     "currentPackageSafetyPassed", "approvedSourceActions", "if (!requests.count)",
     '@"requested": @0', '@"remaining": @0', '@"R40-SOURCE-PREFLIGHT"',
+    '@"R40-NOOP"', 'sessionPlan[@"noChangesNeeded"]',
 ):
     assert required_source_only_guard in all_text, f"missing source-only Restore guard: {required_source_only_guard}"
 source_preflight = backup_manager_text.index("NSDictionary *sourcePlan = [self sourceRestoreReadiness];", backup_manager_text.index("executeRestoreForManifest"))
@@ -466,11 +468,38 @@ package_execution = backup_manager_text.index("[self.restorePlanner executeManif
 assert source_preflight < package_execution, "source destinations must be checked before package mutation"
 assert "sourcesStable" in backup_manager_text
 assert 'S_ISREG(status.st_mode)' in backup_manager_text
-assert '@[@"-d", destinationRoot]' in backup_manager_text
-assert '@[@"-w", destinationRoot]' in backup_manager_text
+assert 'ATMValidatedSourceRelativePath' in backup_manager_text
+assert 'ATMSourceMergedData' in backup_manager_text
+assert 'descriptor[@"relativePath"]' in backup_manager_text
+assert 'expectedItem[@"beforeHash"]' in backup_manager_text
+assert 'expectedItem[@"mergedHash"]' in backup_manager_text
+assert 'expectedPlan[@"executionSnapshot"][@"sources"]' in backup_manager_text
+assert 'parentIsContainedDirectory' in backup_manager_text
+assert 'parentSafe' in backup_manager_text
+assert '!S_ISLNK(parentStatus.st_mode)' in backup_manager_text
+assert '@"aaztm-%@.%@"' not in backup_manager_text
+assert '@[@"-f", @"--", partial, destination]' in backup_manager_text
+assert 'legacyRestoredSourceFileCount' in all_text
+assert 'quarantineLegacyRestoredSources' in all_text
+assert 'Repair Legacy Restored Sources' in all_text
+assert 'Repair Legacy Sources?' in all_text
+assert 'may override package-manager deletions' in all_text
+assert '.aaztm-disabled' in backup_manager_text
+assert '^aaztm-[0-9a-f]{16}' in backup_manager_text
 assert 'packageActions == 0 ? @"no package changes"' in all_text
-assert "ATMWriteRestoreSummaryReport" in all_text
-assert all_text.count("Share Privacy-Safe Report") >= 4
+for unified_report_marker in (
+    "ATMWriteUnifiedReport", "ATMUnifiedReportText", "ATMUnifiedReportSnapshot",
+    "ATMStoreBackupReportSummary", "ATMStoreRestoreReportSummary", "ATMClearUnifiedReportState",
+    "ATMLastBackupBuildV2", "ATMLastRestoreBuildV2", "[Summary]", "[Backup]", "[Import]", "[Restore]", "[Environment]",
+    "Share Report", "Copy Report", "Clear Report State", "No current result",
+):
+    assert unified_report_marker in all_text, f"missing unified report behavior: {unified_report_marker}"
+assert "ATMWriteRestoreSummaryReport" not in all_text
+assert "ATMWriteBackupSummaryReport" not in all_text
+assert 'for (NSString *legacyName in @[@"AAZ-Restore-Report.txt", @"AAZ-Backup-Report.txt"])' in all_text
+assert "Share Troubleshooting Report" not in all_text
+assert '@[@"R40-OK", @"R40-SOURCE-OK", @"R40-NOOP"]' in all_text
+assert '([plan[@"noChangesNeeded"] boolValue] ? @"no-op" : @"blocked")' in all_text
 
 # The source-only gate must distinguish actual pending sources from a true no-op.
 def source_only_safe(simulation_passed, blocked, package_actions, source_states):
@@ -482,8 +511,107 @@ assert not source_only_safe(True, 0, 0, ["present", "present"])
 assert not source_only_safe(True, 1, 0, ["pending"])
 assert source_only_safe(True, 0, 1, [])
 
+def valid_source_path(path, extension):
+    if path == "/etc/apt/sources.list":
+        return extension == "list"
+    prefixes = ("/etc/apt/sources.list.d/", "/etc/apt/sileo.list.d/")
+    prefix = next((candidate for candidate in prefixes if path.startswith(candidate)), None)
+    if not prefix:
+        return False
+    tail = path[len(prefix):]
+    return "/" not in tail and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,127}\.(list|sources)", tail) is not None and tail.endswith("." + extension)
+
+def source_blocks(text, extension):
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    if extension == "list":
+        return [line.strip() for line in text.split("\n") if line.strip()]
+    paragraphs, current = [], []
+    for line in text.split("\n"):
+        if line.strip():
+            current.append(line)
+        elif current:
+            paragraphs.append("\n".join(current))
+            current = []
+    if current:
+        paragraphs.append("\n".join(current))
+    return paragraphs
+
+def merge_sources(existing, backup, extension):
+    existing_blocks = source_blocks(existing, extension)
+    def block_key(block):
+        return " ".join(block.split())
+    seen = {block_key(block) for block in existing_blocks}
+    missing = []
+    for block in source_blocks(backup, extension):
+        key = block_key(block)
+        if key not in seen:
+            missing.append(block)
+            seen.add(key)
+    if not missing and existing:
+        return existing
+    separator = "\n\n" if extension == "sources" else "\n"
+    base = existing.strip()
+    addition = separator.join(missing)
+    return (base + separator + addition if base else addition) + "\n"
+
+assert valid_source_path("/etc/apt/sources.list.d/sileo.sources", "sources")
+assert valid_source_path("/etc/apt/sileo.list.d/zebra.list", "list")
+assert valid_source_path("/etc/apt/sources.list", "list")
+for unsafe_path in (
+    "/etc/apt/sources.list.d/../auth.conf", "/etc/apt/sources.list.d/nested/repo.sources",
+    "/var/mobile/repo.sources", "/etc/apt/sources.list.d/repo.txt",
+):
+    assert not valid_source_path(unsafe_path, "sources")
+
+repo_a = "Types: deb\nURIs: https://a.invalid/\nSuites: ./\nComponents:"
+repo_b = "Types: deb\nURIs: https://b.invalid/\nSuites: ./\nComponents:"
+existing_sileo = repo_a + "\n"
+backup_sileo = repo_a + "\n\n" + repo_b + "\n"
+merged_sileo = merge_sources(existing_sileo, backup_sileo, "sources")
+assert source_blocks(merged_sileo, "sources") == [repo_a, repo_b]
+assert merge_sources(merged_sileo, backup_sileo, "sources") == merged_sileo, "an unchanged Source state must remain a no-op"
+# Sileo rewrites the same sileo.sources file when a user removes an entry. With
+# no separate aaztm-* file, the removed entry stays removed after the app exits.
+sileo_after_delete = repo_a + "\n"
+assert repo_b not in source_blocks(sileo_after_delete, "sources")
+
+list_existing = "deb https://a.invalid/ ./\n"
+list_backup = "deb https://a.invalid/ ./\ndeb https://b.invalid/ ./\n"
+assert merge_sources(list_existing, list_backup, "list") == list_backup
+assert merge_sources("deb   https://a.invalid/   ./\n", list_existing, "list") == "deb   https://a.invalid/   ./\n"
+before_hash = hashlib.sha256(existing_sileo.encode()).hexdigest()
+assert before_hash != hashlib.sha256((existing_sileo + "drift").encode()).hexdigest(), "source drift must invalidate the approved snapshot"
+
 with tempfile.TemporaryDirectory() as temporary:
     temporary_root = Path(temporary)
+    legacy_root = temporary_root / "legacy-sources"
+    legacy_root.mkdir()
+    legacy_names = ["aaztm-065b708b568a55c8.sources", "aaztm-b447f72d4cb4817b.sources"]
+    for name in legacy_names:
+        (legacy_root / name).write_text(repo_a + "\n")
+    unrelated_source = legacy_root / "sileo.sources"
+    unrelated_source.write_text(existing_sileo)
+    quarantine = legacy_root / ".aaztm-disabled"
+    quarantine.mkdir()
+    for source in legacy_root.iterdir():
+        if re.fullmatch(r"aaztm-[0-9a-f]{16}\.(list|sources)", source.name):
+            source.rename(quarantine / source.name)
+    assert sorted(item.name for item in quarantine.iterdir()) == legacy_names
+    assert unrelated_source.read_text() == existing_sileo
+
+    rollback_root = temporary_root / "source-rollback"
+    rollback_root.mkdir()
+    first_source = rollback_root / "sileo.sources"
+    second_source = rollback_root / "zebra.sources"
+    first_source.write_text(existing_sileo)
+    second_source.write_text(repo_a + "\n")
+    originals = {first_source: first_source.read_bytes(), second_source: second_source.read_bytes()}
+    first_source.write_text(merged_sileo)
+    # A later grouped write failure restores every file already changed.
+    for path, original in originals.items():
+        path.write_bytes(original)
+    assert all(path.read_bytes() == original for path, original in originals.items())
+
     payload_root = temporary_root / "payload"
     shared = payload_root / "shared"
     shared.mkdir(parents=True)
@@ -760,7 +888,7 @@ assert '@"architecture": @"iphoneos-arm64"' in all_text
 assert '@"jailbreakPrefix"' not in (ROOT / "Core/ATMBackupManager.m").read_text()
 assert '@"iOSVersion"' not in (ROOT / "Core/ATMBackupManager.m").read_text()
 core_text = (ROOT / "Core/ATMCore.m").read_text()
-diagnostic_body = core_text.split("NSURL *ATMWriteDiagnosticReport", 1)[1].split("@implementation ATMPersonalLedger", 1)[0]
+diagnostic_body = core_text.split("NSString *ATMUnifiedReportText", 1)[1].split("NSURL *ATMWriteUnifiedReport", 1)[0]
 for private_field in ("record.packageID", "record.name", "record.version", "sourceOrigin", "depends", "provides", 'run[@"output"]'):
     assert private_field not in diagnostic_body, f"diagnostic exposes {private_field}"
 assert "performsFirstActionWithFullSwipe = NO" in all_text
