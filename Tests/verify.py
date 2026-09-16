@@ -18,11 +18,14 @@ ROOT = Path(__file__).resolve().parents[1]
 required = [
     "Makefile", "control", "Resources/Info.plist",
     "Resources/AAZTweakManager.entitlements", "Resources/AppIcon60x60.png",
+    "Resources/ar.lproj/InfoPlist.strings",
     "Resources/AppIcon60x60@2x.png", "Resources/AppIcon60x60@3x.png", "main.m",
     "App/ATMAppDelegate.m", "App/ATMViewControllers.m",
+    "Core/ATMLocalization.h", "Core/ATMLocalization.m",
     "Core/ATMCore.m", "Core/ATMBackupManager.m", "Core/ATMRestorePlanner.h",
     "Core/ATMRestorePlanner.m", "Core/ATMZipWriter.m",
     "Extension/ShareViewController.m", "Extension/Resources/Info.plist",
+    "Extension/Resources/ar.lproj/InfoPlist.strings",
     "Extension/AAZBackupImporter.entitlements",
 ]
 for relative in required:
@@ -32,7 +35,7 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "52"
+assert info["CFBundleVersion"] == "53"
 assert info["LSSupportsOpeningDocumentsInPlace"] is False
 assert "CFBundleDocumentTypes" not in info
 
@@ -52,7 +55,7 @@ assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["Ap
 with (ROOT / "Extension/Resources/Info.plist").open("rb") as handle:
     extension_info = plistlib.load(handle)
 assert extension_info["CFBundleIdentifier"] == "com.aaz.tweakmanager.importer"
-assert extension_info["CFBundleVersion"] == "52"
+assert extension_info["CFBundleVersion"] == "53"
 assert extension_info["CFBundlePackageType"] == "XPC!"
 extension_definition = extension_info["NSExtension"]
 assert extension_definition["NSExtensionPointIdentifier"] == "com.apple.share-services"
@@ -70,7 +73,7 @@ assert extension_entitlements == {
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta52" in control
+assert "Version: 0.1.0~beta53" in control
 assert "Priority: optional" in control
 assert "Depends: firmware (>= 15.0), coreutils, diffutils, dpkg, tar" in control
 
@@ -136,7 +139,7 @@ assert "Backup Verified" in all_text
 assert "ATMBackupDetailsController" in all_text
 assert "Backup Health & Readiness" not in all_text
 assert "Check Restore Plan" in all_text
-assert "Restore Readiness" in all_text
+assert "Restore Plan" in all_text
 assert "Readiness Check Passed" in all_text
 assert "Restore Needs Attention" in all_text
 assert "Preview only. No packages or sources were changed." in all_text
@@ -165,6 +168,8 @@ view_controller_text = (ROOT / "App/ATMViewControllers.m").read_text()
 assert (ROOT / "App/ATMViewControllers.h").is_file()
 extension_text = (ROOT / "Extension/ShareViewController.m").read_text()
 makefile_text = (ROOT / "Makefile").read_text()
+localization_text = (ROOT / "Core/ATMLocalization.m").read_text()
+readme_text = (ROOT / "README.md").read_text()
 restore_planner_text = (ROOT / "Core/ATMRestorePlanner.m").read_text()
 assert "ATMBackupFinderController" not in view_controller_text
 assert "Find local backups without opening Files" not in view_controller_text
@@ -176,6 +181,54 @@ assert "ATMMaterializeSharedFile(url)" in extension_text
 assert "ATMHasDebianArchiveHeader" in extension_text
 assert "containerURLForSecurityApplicationGroupIdentifier:ATMImportGroup" in extension_text
 assert "group.com.aaz.tweakmanager" in extension_text
+assert "Core/ATMLocalization.m" in makefile_text
+assert "AAZTweakManager_BUNDLE_RESOURCE_FILES = Resources/ar.lproj" in makefile_text
+assert "AAZBackupImporter_FILES = Extension/ShareViewController.m Core/ATMLocalization.m" in makefile_text
+assert '#import "ATMLocalization.h"' in view_controller_text
+assert '#import "ATMLocalization.h"' in extension_text
+assert "ATMInstallLocalization();" in extension_text
+assert "ATMLanguageDefaultsKey" in localization_text
+assert 'return [preferred hasPrefix:@"ar"] ? @"ar" : @"en";' in localization_text
+assert "UISemanticContentAttributeForceRightToLeft" in all_text
+assert '@"Choose Language"' in view_controller_text
+assert '[self applyLanguage:@"ar"]' in view_controller_text
+assert '[self applyLanguage:@"en"]' in view_controller_text
+assert "مدير تعديلات AAZ" in localization_text
+assert "جارٍ تجهيز الملف" in localization_text
+localization_dictionary = localization_text.split("strings = @{", 1)[1].split("        };", 1)[0]
+arabic_pairs = re.findall(r'@"(?:\\.|[^"\\])*"\s*:\s*@"((?:\\.|[^"\\])*)"', localization_dictionary)
+assert len(arabic_pairs) >= 180
+assert all(value.strip() for value in arabic_pairs)
+keys = re.findall(r'@"((?:\\.|[^"\\])*)"\s*:\s*@"', localization_dictionary)
+assert len(keys) == len(set(keys)), "duplicate localization key"
+localized_keys = set(keys)
+structural_formats = {" • ", "%@ %@", "%@ %lu", "%@ • %@", "%@ • %@\\n%@"}
+short_ui_words = {"Today", "Yesterday", "Share", "Missing", "Result", "Held", "Backup", "Standard", "Encrypted"}
+for literal in set(re.findall(r'@"((?:\\.|[^"\\])*)"', view_controller_text)):
+    if literal in structural_formats or literal in localized_keys:
+        continue
+    looks_visible = " " in literal or literal in short_ui_words
+    looks_technical = re.fullmatch(r"[a-z0-9_.:/@-]+", literal) is not None
+    assert not (looks_visible and not looks_technical), f"unlocalized app text: {literal}"
+for literal in (
+    "Preparing file…", "Done",
+    "Backup saved. Open AAZ Tweak Manager to verify and import it.",
+    "Package saved. Open AAZ Tweak Manager to verify it for Portable Backup.",
+    "Could not prepare this file.",
+):
+    assert literal in localized_keys, f"unlocalized Share Extension text: {literal}"
+error_literals = set()
+for source_name in ("ATMCore.m", "ATMBackupManager.m", "ATMRestorePlanner.m", "ATMZipWriter.m"):
+    source = (ROOT / "Core" / source_name).read_text()
+    error_literals.update(re.findall(r'NSLocalizedDescriptionKey\s*:\s*@"((?:\\.|[^"\\])*)"', source))
+    error_literals.update(re.findall(r'ATMBackupError\([^,]+,\s*@"((?:\\.|[^"\\])*)"', source))
+    error_literals.update(re.findall(r'ATMRestorePlanError\([^,]+,\s*@"((?:\\.|[^"\\])*)"', source))
+for literal in error_literals:
+    assert literal in localized_keys, f"unlocalized user-facing error: {literal}"
+assert "## English" in readme_text and "## العربية" in readme_text
+assert len(readme_text.splitlines()) <= 100
+for internal_term in ("synthetic", "CRC", "footer", "staging", "persona-based", "preflight"):
+    assert internal_term.lower() not in readme_text.lower(), f"visitor README exposes internal detail: {internal_term}"
 assert "O_RDONLY | O_CLOEXEC" in extension_text
 assert "O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC" in extension_text
 assert "fsync(destination)" in extension_text
@@ -342,7 +395,7 @@ assert "dpkg-repack" not in control
 assert '[[defaults stringForKey:ATMLastRestoreBuildKey] isEqualToString:currentBuild]' in (ROOT / "Core/ATMCore.m").read_text()
 assert 'ATMProtectedPackageIDs() containsObject:packageID.lowercaseString' in backup_manager_text
 assert 'isPendingPackagePayloadURL' in all_text
-assert "filenames, paths, providers, passwords, or archive contents" in all_text
+assert "It excludes names, paths, passwords, and file contents." in all_text
 assert 'Portable Backup Verified' in all_text
 assert 'Backup Not Portable' in all_text
 assert '@"directories": directoryPaths.array' in all_text
@@ -882,7 +935,7 @@ assert "[self beginPickerImportFromURL:url]" not in all_text
 assert "ATMHandlePendingImport" in all_text
 assert "for (NSUInteger index = 0; index < titles.count; index++)" in all_text
 assert "AAZTweakManager_FRAMEWORKS = UIKit Foundation Security" in (ROOT / "Makefile").read_text()
-assert "Restore Readiness" in all_text
+assert "Restore Plan" in all_text
 assert "The developer link opens externally" not in all_text
 assert '@"architecture": @"iphoneos-arm64"' in all_text
 assert '@"jailbreakPrefix"' not in (ROOT / "Core/ATMBackupManager.m").read_text()

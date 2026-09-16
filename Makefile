@@ -10,6 +10,7 @@ AAZTweakManager_FILES = \
 	main.m \
 	App/ATMAppDelegate.m \
 	App/ATMViewControllers.m \
+	Core/ATMLocalization.m \
 	Core/ATMCore.m \
 	Core/ATMBackupManager.m \
 	Core/ATMRestorePlanner.m \
@@ -24,10 +25,12 @@ AAZTweakManager_RESOURCE_FILES = \
 	Resources/AppIcon60x60.png \
 	Resources/AppIcon60x60@2x.png \
 	Resources/AppIcon60x60@3x.png
+AAZTweakManager_BUNDLE_RESOURCE_FILES = Resources/ar.lproj
 
 APPEX_NAME = AAZBackupImporter
-AAZBackupImporter_FILES = Extension/ShareViewController.m
-AAZBackupImporter_CFLAGS = -fobjc-arc -Wall -Wextra -fapplication-extension
+AAZBackupImporter_FILES = Extension/ShareViewController.m Core/ATMLocalization.m
+AAZBackupImporter_CFLAGS = -fobjc-arc -Wall -Wextra -fapplication-extension \
+	-I$(THEOS_PROJECT_DIR)/Core
 AAZBackupImporter_FRAMEWORKS = UIKit Foundation
 AAZBackupImporter_CODESIGN_FLAGS = -SExtension/AAZBackupImporter.entitlements
 AAZBackupImporter_INSTALL_PATH = /Applications/AAZTweakManager.app/PlugIns

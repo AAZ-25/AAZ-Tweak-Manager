@@ -19,7 +19,7 @@ case "$phase" in
   metadata)
     test -f "$deb"
     test "$(dpkg-deb -f "$deb" Package)" = "com.aaz.tweakmanager"
-    test "$(dpkg-deb -f "$deb" Version)" = "0.1.0~beta52"
+    test "$(dpkg-deb -f "$deb" Version)" = "0.1.0~beta53"
     test "$(dpkg-deb -f "$deb" Architecture)" = "iphoneos-arm64"
     dpkg-deb -c "$deb" > "$package_list"
     ;;
@@ -27,14 +27,32 @@ case "$phase" in
     test -f "$package_list"
     grep -Fq 'AAZTweakManager.app/AAZTweakManager' "$package_list"
     grep -Fq 'AAZTweakManager.app/AppIcon60x60@3x.png' "$package_list"
+    grep -Fq 'AAZTweakManager.app/ar.lproj/InfoPlist.strings' "$package_list"
     grep -Fq 'AAZTweakManager.app/PlugIns/AAZBackupImporter.appex/AAZBackupImporter' "$package_list"
     grep -Fq 'AAZTweakManager.app/PlugIns/AAZBackupImporter.appex/Info.plist' "$package_list"
+    grep -Fq 'AAZTweakManager.app/PlugIns/AAZBackupImporter.appex/ar.lproj/InfoPlist.strings' "$package_list"
     rm -rf "$package_root"
     dpkg-deb -x "$deb" "$package_root"
     test -f "$app"
     test -f "$app_info"
     test -f "$extension"
     test -f "$extension_info"
+    test -f "$package_root/var/jb/Applications/AAZTweakManager.app/ar.lproj/InfoPlist.strings"
+    test -f "$package_root/var/jb/Applications/AAZTweakManager.app/PlugIns/AAZBackupImporter.appex/ar.lproj/InfoPlist.strings"
+    python3 - \
+      "$package_root/var/jb/Applications/AAZTweakManager.app/ar.lproj/InfoPlist.strings" \
+      "$package_root/var/jb/Applications/AAZTweakManager.app/PlugIns/AAZBackupImporter.appex/ar.lproj/InfoPlist.strings" <<'PY'
+import plistlib
+import sys
+
+with open(sys.argv[1], "rb") as handle:
+    app_strings = plistlib.load(handle)
+with open(sys.argv[2], "rb") as handle:
+    extension_strings = plistlib.load(handle)
+
+assert app_strings["CFBundleDisplayName"] == "مدير تعديلات AAZ"
+assert extension_strings["CFBundleDisplayName"] == "حفظ في مدير تعديلات AAZ"
+PY
     ;;
   identities)
     ldid -e "$app" > "$RUNNER_TEMP/aaz-app.entitlements"
@@ -65,10 +83,10 @@ assert extension_entitlements == {
     "application-identifier": "com.aaz.tweakmanager.importer",
     "com.apple.security.application-groups": ["group.com.aaz.tweakmanager"],
 }
-assert app_info["CFBundleVersion"] == "52"
+assert app_info["CFBundleVersion"] == "53"
 assert "CFBundleDocumentTypes" not in app_info
 assert extension_info["CFBundleIdentifier"] == "com.aaz.tweakmanager.importer"
-assert extension_info["CFBundleVersion"] == "52"
+assert extension_info["CFBundleVersion"] == "53"
 definition = extension_info["NSExtension"]
 assert definition["NSExtensionPointIdentifier"] == "com.apple.share-services"
 assert definition["NSExtensionPrincipalClass"] == "AAZShareViewController"
@@ -90,7 +108,11 @@ PY
     grep -Fq 'Unselect All' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'Search packages' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'Create Backup?' "$RUNNER_TEMP/aaz-app.strings"
-    grep -Fq 'No manual DEB sharing is required.' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'Save %lu selected package' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'ATMLanguage' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'Choose Language' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'ATMLanguage' "$RUNNER_TEMP/aaz-extension.strings"
+    grep -Fq 'Could not prepare this file.' "$RUNNER_TEMP/aaz-extension.strings"
     grep -Fq 'Selection Updated' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'Encrypted Backup' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'Package Vault' "$RUNNER_TEMP/aaz-app.strings"

@@ -1,5 +1,6 @@
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
+#import "ATMLocalization.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -92,10 +93,12 @@ static NSString *ATMMaterializeSharedFile(NSURL *sourceURL) {
 
 - (void)viewDidLoad {
     [super viewDidLoad];
+    ATMInstallLocalization();
     self.view.backgroundColor = UIColor.systemBackgroundColor;
+    self.view.semanticContentAttribute = ATMIsArabicLanguage() ? UISemanticContentAttributeForceRightToLeft : UISemanticContentAttributeForceLeftToRight;
     self.statusLabel = [UILabel new];
     self.statusLabel.translatesAutoresizingMaskIntoConstraints = NO;
-    self.statusLabel.text = @"Preparing file…";
+    self.statusLabel.text = ATMLocalizedString(@"Preparing file…");
     self.statusLabel.textAlignment = NSTextAlignmentCenter;
     self.statusLabel.numberOfLines = 0;
     self.statusLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
@@ -105,7 +108,7 @@ static NSString *ATMMaterializeSharedFile(NSURL *sourceURL) {
     self.closeButton = [UIButton buttonWithType:UIButtonTypeSystem];
     self.closeButton.translatesAutoresizingMaskIntoConstraints = NO;
     self.closeButton.hidden = YES;
-    [self.closeButton setTitle:@"Done" forState:UIControlStateNormal];
+    [self.closeButton setTitle:ATMLocalizedString(@"Done") forState:UIControlStateNormal];
     [self.closeButton addTarget:self action:@selector(finish) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:self.statusLabel];
     [self.view addSubview:self.spinner];
@@ -152,8 +155,8 @@ static NSString *ATMMaterializeSharedFile(NSURL *sourceURL) {
     [self.spinner stopAnimating];
     self.spinner.hidden = YES;
     self.closeButton.hidden = NO;
-    self.statusLabel.text = [kind isEqualToString:@"aaztmbackup"] ? @"Backup saved. Open AAZ Tweak Manager to verify and import it." :
-        ([kind isEqualToString:@"deb"] ? @"Package saved. Open AAZ Tweak Manager to verify it for Portable Backup." : @"Could not prepare this file.");
+    self.statusLabel.text = ATMLocalizedString([kind isEqualToString:@"aaztmbackup"] ? @"Backup saved. Open AAZ Tweak Manager to verify and import it." :
+        ([kind isEqualToString:@"deb"] ? @"Package saved. Open AAZ Tweak Manager to verify it for Portable Backup." : @"Could not prepare this file."));
 }
 
 - (void)finish {
