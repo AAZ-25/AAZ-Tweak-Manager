@@ -692,19 +692,8 @@ void ATMApplyLanguageDirectionToViewController(UIViewController *controller) {
 void ATMApplyLanguageDirectionToWindow(UIWindow *window) {
     if (!window) return;
     window.semanticContentAttribute = ATMLanguageSemanticContentAttribute();
-    ATMApplyLanguageDirectionToView(window);
     ATMApplyLanguageDirectionToViewController(window.rootViewController);
 }
-
-@interface UIViewController (ATMLanguageDirection)
-- (void)atm_viewDidLayoutSubviews;
-@end
-@implementation UIViewController (ATMLanguageDirection)
-- (void)atm_viewDidLayoutSubviews {
-    [self atm_viewDidLayoutSubviews];
-    ATMApplyLanguageDirectionToViewController(self);
-}
-@end
 
 @interface UISearchBar (ATMLocalization)
 - (void)atm_setPlaceholder:(NSString *)placeholder;
@@ -742,7 +731,6 @@ void ATMInstallLocalization(void) {
         ATMSwap(UITextField.class, @selector(setPlaceholder:), @selector(atm_setPlaceholder:));
         ATMSwap(UIButton.class, @selector(setTitle:forState:), @selector(atm_setTitle:forState:));
         ATMSwap(UINavigationItem.class, @selector(setPrompt:), @selector(atm_setPrompt:));
-        ATMSwap(UIViewController.class, @selector(viewDidLayoutSubviews), @selector(atm_viewDidLayoutSubviews));
         ATMSwap(UISearchBar.class, @selector(setPlaceholder:), @selector(atm_setPlaceholder:));
         ATMSwap(UIBarButtonItem.class, @selector(setTitle:), @selector(atm_setTitle:));
         ATMSwap(UITabBarItem.class, @selector(setTitle:), @selector(atm_setTitle:));

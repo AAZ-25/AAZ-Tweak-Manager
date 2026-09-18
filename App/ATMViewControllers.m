@@ -1028,9 +1028,9 @@ static UIView *ATMEmptyStateView(NSString *symbol, NSString *titleText, NSString
     ATMSetLanguageCode(languageCode);
     UIWindow *window = self.view.window;
     window.rootViewController = ATMCreateRootController();
-    ATMApplyLanguageDirectionToWindow(window);
-    [window setNeedsLayout];
-    [window layoutIfNeeded];
+    window.backgroundColor = UIColor.systemBackgroundColor;
+    window.opaque = YES;
+    dispatch_async(dispatch_get_main_queue(), ^{ ATMApplyLanguageDirectionToWindow(window); });
 }
 - (void)importDiagnosticsChanged:(UISwitch *)sender { ATMSetImportDiagnosticsEnabled(sender.isOn); [self.tableView reloadSections:[NSIndexSet indexSetWithIndex:4] withRowAnimation:UITableViewRowAnimationNone]; }
 - (void)showExcludedChanged:(UISwitch *)sender { [NSUserDefaults.standardUserDefaults setBool:sender.isOn forKey:ATMShowExcludedKey]; [NSNotificationCenter.defaultCenter postNotificationName:ATMDataChangedNotification object:nil]; }
@@ -1041,6 +1041,7 @@ static UINavigationController *ATMNavigation(UIViewController *controller, NSStr
     navigation.navigationBar.prefersLargeTitles = YES; controller.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeAlways;
     navigation.tabBarItem.title = controller.tabBarItem.title;
     navigation.tabBarItem.image = [UIImage systemImageNamed:imageName];
+    navigation.view.backgroundColor = UIColor.systemBackgroundColor;
     navigation.view.semanticContentAttribute = ATMLanguageSemanticContentAttribute();
     navigation.navigationBar.semanticContentAttribute = ATMLanguageSemanticContentAttribute();
     return navigation;
@@ -1049,6 +1050,7 @@ static UINavigationController *ATMNavigation(UIViewController *controller, NSStr
 UIViewController *ATMCreateRootController(void) {
     (void)ATMAppModel.shared;
     UITabBarController *tabs = [UITabBarController new];
+    tabs.view.backgroundColor = UIColor.systemBackgroundColor;
     tabs.view.semanticContentAttribute = ATMLanguageSemanticContentAttribute();
     tabs.tabBar.semanticContentAttribute = ATMLanguageSemanticContentAttribute();
     UIViewController *tweaks = [ATMMyTweaksController new]; tweaks.tabBarItem.title = @"My Tweaks";
@@ -1057,7 +1059,6 @@ UIViewController *ATMCreateRootController(void) {
     UIViewController *history = [ATMHistoryController new]; history.tabBarItem.title = @"Reports";
     UIViewController *settings = [ATMSettingsController new]; settings.tabBarItem.title = @"Settings";
     tabs.viewControllers = @[ATMNavigation(tweaks, @"shippingbox.fill"), ATMNavigation(backups, @"externaldrive.fill"), ATMNavigation(sources, @"link"), ATMNavigation(history, @"doc.text.magnifyingglass"), ATMNavigation(settings, @"gearshape.fill")];
-    ATMApplyLanguageDirectionToViewController(tabs);
     return tabs;
 }
 

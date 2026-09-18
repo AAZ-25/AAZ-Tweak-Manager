@@ -36,7 +36,7 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "55"
+assert info["CFBundleVersion"] == "56"
 assert info["LSSupportsOpeningDocumentsInPlace"] is False
 assert "CFBundleDocumentTypes" not in info
 
@@ -56,7 +56,7 @@ assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["Ap
 with (ROOT / "Extension/Resources/Info.plist").open("rb") as handle:
     extension_info = plistlib.load(handle)
 assert extension_info["CFBundleIdentifier"] == "com.aaz.tweakmanager.importer"
-assert extension_info["CFBundleVersion"] == "55"
+assert extension_info["CFBundleVersion"] == "56"
 assert extension_info["CFBundlePackageType"] == "XPC!"
 extension_definition = extension_info["NSExtension"]
 assert extension_definition["NSExtensionPointIdentifier"] == "com.apple.share-services"
@@ -74,7 +74,7 @@ assert extension_entitlements == {
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta55" in control
+assert "Version: 0.1.0~beta56" in control
 assert "Priority: optional" in control
 assert "Depends: firmware (>= 15.0), coreutils, diffutils, dpkg, tar" in control
 
@@ -215,15 +215,22 @@ assert "ATMLanguageSemanticContentAttribute" in localization_text
 assert "ATMApplyLanguageDirectionToView" in localization_text
 assert "ATMApplyLanguageDirectionToViewController" in localization_text
 assert "ATMApplyLanguageDirectionToWindow" in localization_text
-assert "atm_viewDidLayoutSubviews" in localization_text
+assert "viewDidLayoutSubviews" not in localization_text
 assert "ATMViewIsInsideSearchBar" in localization_text
 assert '[button setTitle:ATMLocalizedString(@"Cancel")' in localization_text
 assert "UITableViewAutomaticDimension" in localization_text
 assert "NSDirectionalEdgeInsetsMake(11.0, 16.0, 11.0, 16.0)" in localization_text
-assert "ATMSwap(UIViewController.class, @selector(viewDidLayoutSubviews)" in localization_text
+assert "ATMApplyLanguageDirectionToView(window);" not in localization_text
 assert "ATMApplyLanguageDirectionToWindow(self.window);" in app_delegate_text
 assert "ATMApplyLanguageDirectionToWindow(window);" in view_controller_text
 assert "ATMApplyLanguageDirectionToViewController(self);" in extension_text
+assert "self.window.backgroundColor = UIColor.systemBackgroundColor;" in app_delegate_text
+assert "self.window.opaque = YES;" in app_delegate_text
+assert app_delegate_text.index("[self.window makeKeyAndVisible]") < app_delegate_text.index("dispatch_async(dispatch_get_main_queue(), ^{ ATMApplyLanguageDirectionToWindow(self.window);")
+assert "[window layoutIfNeeded]" not in view_controller_text
+assert "window.backgroundColor = UIColor.systemBackgroundColor;" in view_controller_text
+assert "tabs.view.backgroundColor = UIColor.systemBackgroundColor;" in view_controller_text
+assert "navigation.view.backgroundColor = UIColor.systemBackgroundColor;" in view_controller_text
 assert "navigation.navigationBar.semanticContentAttribute = ATMLanguageSemanticContentAttribute();" in view_controller_text
 assert "tabs.tabBar.semanticContentAttribute = ATMLanguageSemanticContentAttribute();" in view_controller_text
 assert "NSByteCountFormatter" not in view_controller_text

@@ -24,9 +24,11 @@ static NSString *const ATMExperimentalNoticeLastBuildKey = @"ATMExperimentalNoti
     UITabBar.appearance.standardAppearance = tabAppearance;
     UITabBar.appearance.scrollEdgeAppearance = tabAppearance;
     self.window = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+    self.window.backgroundColor = UIColor.systemBackgroundColor;
+    self.window.opaque = YES;
     self.window.tintColor = accent;
     self.window.rootViewController = ATMCreateRootController();
-    ATMApplyLanguageDirectionToWindow(self.window);
+    self.window.semanticContentAttribute = ATMLanguageSemanticContentAttribute();
     [self.window makeKeyAndVisible];
     dispatch_async(dispatch_get_main_queue(), ^{ ATMApplyLanguageDirectionToWindow(self.window); });
     return YES;
