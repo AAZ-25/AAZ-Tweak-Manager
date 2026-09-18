@@ -1,6 +1,6 @@
 # Third-Party References
 
-AAZ Tweak Manager is implemented independently. No third-party source code is copied into the project.
+AAZ Tweak Manager is implemented independently. No third-party implementation source or binary is copied or bundled in the project.
 
 ## Research references
 
@@ -12,4 +12,10 @@ AAZ Tweak Manager is implemented independently. No third-party source code is co
 - RootHide's public developer documentation and TrollStore's public documentation were reviewed for the container-preserving entitlement pattern used by unsandboxed jailbreak applications.
 - Apple's `NSItemProvider`, `NSFileCoordinator`, and App Groups documentation was reviewed for the Share Extension handoff, temporary provider-file copy, coordinated fallback read, and shared-container boundary. The implementation is independent and uses only public platform APIs for this handoff.
 
-Apple, Debian, Twackup, Sileo, Zebra, Chariz, IAmLazy, RootHide, and TrollStore are not affiliated with or endorsing this project.
+## Tools and system libraries
+
+- Theos is used as the build system and is fetched only in the build environment. It is not included in the source tree or application package.
+- APT/dpkg, GNU coreutils/diffutils, and `tar` are separately installed Rootless runtime tools declared by the package. Their source or binaries are not redistributed by this project.
+- UIKit, Foundation, Security/CommonCrypto, and the platform-provided zlib are system SDK libraries. They are linked or called through their public platform interfaces and are not redistributed by this project.
+
+Apple, Debian, Twackup, Sileo, IAmLazy, RootHide, TrollStore, and Theos are not affiliated with or endorsing this project.

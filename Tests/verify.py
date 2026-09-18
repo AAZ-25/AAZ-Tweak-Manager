@@ -16,7 +16,8 @@ import warnings
 ROOT = Path(__file__).resolve().parents[1]
 
 required = [
-    "Makefile", "control", "Resources/Info.plist",
+    "Makefile", "control", "LICENSE", "README.md", "THIRD_PARTY.md",
+    "Resources/Info.plist",
     "Resources/AAZTweakManager.entitlements", "Resources/AppIcon60x60.png",
     "Resources/ar.lproj/InfoPlist.strings",
     "Resources/AppIcon60x60@2x.png", "Resources/AppIcon60x60@3x.png", "main.m",
@@ -171,7 +172,17 @@ extension_text = (ROOT / "Extension/ShareViewController.m").read_text()
 makefile_text = (ROOT / "Makefile").read_text()
 localization_text = (ROOT / "Core/ATMLocalization.m").read_text()
 readme_text = (ROOT / "README.md").read_text()
+license_text = (ROOT / "LICENSE").read_text()
+third_party_text = (ROOT / "THIRD_PARTY.md").read_text()
 restore_planner_text = (ROOT / "Core/ATMRestorePlanner.m").read_text()
+assert license_text.startswith("MIT License\n")
+assert "Copyright (c) 2026 AAZ" in license_text
+assert "Chariz" not in third_party_text
+assert "Zebra" not in third_party_text
+for actual_reference in ("Debian", "Twackup", "Sileo", "IAmLazy", "RootHide", "TrollStore", "Apple"):
+    assert actual_reference in third_party_text, f"missing used research reference: {actual_reference}"
+for actual_tool in ("Theos", "APT/dpkg", "coreutils/diffutils", "`tar`", "CommonCrypto", "zlib"):
+    assert actual_tool in third_party_text, f"missing used tool or system library: {actual_tool}"
 assert "ATMBackupFinderController" not in view_controller_text
 assert "Find local backups without opening Files" not in view_controller_text
 assert "UIDocumentPickerViewController" not in view_controller_text
