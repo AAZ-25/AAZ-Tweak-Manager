@@ -95,7 +95,7 @@ static NSString *ATMMaterializeSharedFile(NSURL *sourceURL) {
     [super viewDidLoad];
     ATMInstallLocalization();
     self.view.backgroundColor = UIColor.systemBackgroundColor;
-    self.view.semanticContentAttribute = ATMIsArabicLanguage() ? UISemanticContentAttributeForceRightToLeft : UISemanticContentAttributeForceLeftToRight;
+    self.view.semanticContentAttribute = ATMLanguageSemanticContentAttribute();
     self.statusLabel = [UILabel new];
     self.statusLabel.translatesAutoresizingMaskIntoConstraints = NO;
     self.statusLabel.text = ATMLocalizedString(@"Preparing file…");
@@ -122,10 +122,12 @@ static NSString *ATMMaterializeSharedFile(NSURL *sourceURL) {
         [self.closeButton.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
         [self.closeButton.topAnchor constraintEqualToAnchor:self.statusLabel.bottomAnchor constant:18.0],
     ]];
+    ATMApplyLanguageDirectionToViewController(self);
 }
 
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
+    ATMApplyLanguageDirectionToViewController(self);
     if (self.started) return;
     self.started = YES;
     [self loadSharedFile];

@@ -35,7 +35,7 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "54"
+assert info["CFBundleVersion"] == "55"
 assert info["LSSupportsOpeningDocumentsInPlace"] is False
 assert "CFBundleDocumentTypes" not in info
 
@@ -55,7 +55,7 @@ assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["Ap
 with (ROOT / "Extension/Resources/Info.plist").open("rb") as handle:
     extension_info = plistlib.load(handle)
 assert extension_info["CFBundleIdentifier"] == "com.aaz.tweakmanager.importer"
-assert extension_info["CFBundleVersion"] == "54"
+assert extension_info["CFBundleVersion"] == "55"
 assert extension_info["CFBundlePackageType"] == "XPC!"
 extension_definition = extension_info["NSExtension"]
 assert extension_definition["NSExtensionPointIdentifier"] == "com.apple.share-services"
@@ -73,7 +73,7 @@ assert extension_entitlements == {
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta54" in control
+assert "Version: 0.1.0~beta55" in control
 assert "Priority: optional" in control
 assert "Depends: firmware (>= 15.0), coreutils, diffutils, dpkg, tar" in control
 
@@ -191,12 +191,32 @@ assert "ATMInstallLocalization();" in extension_text
 assert "ATMLanguageDefaultsKey" in localization_text
 assert 'return [preferred hasPrefix:@"ar"] ? @"ar" : @"en";' in localization_text
 assert "UISemanticContentAttributeForceRightToLeft" in all_text
-assert 'localeWithLocaleIdentifier:ATMIsArabicLanguage() ? @"ar_AE" : @"en_US"' in localization_text
+assert 'localeWithLocaleIdentifier:ATMIsArabicLanguage() ? @"ar_AE" : @"en_US_POSIX"' in localization_text
 assert "NSCalendarIdentifierGregorian" in localization_text
 assert "ATMFormatWithIsolatedNumbers" in localization_text
+assert "ATMLocalizedByteCountString" in localization_text
+assert "NSNumberFormatterDecimalStyle" in localization_text
+assert "initWithFormat:localizedFormat locale:ATMSelectedLocale() arguments:arguments" in localization_text
 assert "ATMBidiIsolatedString" in localization_text
 assert "ATMLTRIsolatedString" in localization_text
 assert "0x2066" in localization_text and "0x2068" in localization_text and "0x2069" in localization_text
+assert "ATMLanguageSemanticContentAttribute" in localization_text
+assert "ATMApplyLanguageDirectionToView" in localization_text
+assert "ATMApplyLanguageDirectionToViewController" in localization_text
+assert "ATMApplyLanguageDirectionToWindow" in localization_text
+assert "atm_viewDidLayoutSubviews" in localization_text
+assert "ATMViewIsInsideSearchBar" in localization_text
+assert '[button setTitle:ATMLocalizedString(@"Cancel")' in localization_text
+assert "UITableViewAutomaticDimension" in localization_text
+assert "NSDirectionalEdgeInsetsMake(11.0, 16.0, 11.0, 16.0)" in localization_text
+assert "ATMSwap(UIViewController.class, @selector(viewDidLayoutSubviews)" in localization_text
+assert "ATMApplyLanguageDirectionToWindow(self.window);" in app_delegate_text
+assert "ATMApplyLanguageDirectionToWindow(window);" in view_controller_text
+assert "ATMApplyLanguageDirectionToViewController(self);" in extension_text
+assert "navigation.navigationBar.semanticContentAttribute = ATMLanguageSemanticContentAttribute();" in view_controller_text
+assert "tabs.tabBar.semanticContentAttribute = ATMLanguageSemanticContentAttribute();" in view_controller_text
+assert "NSByteCountFormatter" not in view_controller_text
+assert "initWithBarButtonSystemItem" not in view_controller_text
 assert "static NSDateFormatter" not in view_controller_text
 assert view_controller_text.count("ATMLocalizedDateString") >= 4
 assert view_controller_text.count("ATMTechnicalValue") >= 20
@@ -204,6 +224,11 @@ assert "ATMEnglishPluralSuffix" in view_controller_text
 assert '@"Choose Language"' in view_controller_text
 assert '[self applyLanguage:@"ar"]' in view_controller_text
 assert '[self applyLanguage:@"en"]' in view_controller_text
+assert 'actionWithTitle:ATMLocalizedString(@"English")' in view_controller_text
+assert 'actionWithTitle:ATMLocalizedString(@"Arabic")' in view_controller_text
+assert 'ATMIsArabicLanguage() ? @"العربية" : @"English"' not in view_controller_text
+assert not re.search(r'[\u0600-\u06ff]', view_controller_text), "Arabic literal leaked outside the localization table"
+assert not re.search(r'[\u0600-\u06ff]', extension_text), "Arabic literal leaked into Share Extension source"
 assert "مدير تعديلات AAZ" in localization_text
 assert "جارٍ تجهيز الملف" in localization_text
 assert "ATMExperimentalNoticeLastBuild" in app_delegate_text
@@ -219,6 +244,8 @@ assert all(value.strip() for value in arabic_pairs)
 keys = re.findall(r'@"((?:\\.|[^"\\])*)"\s*:\s*@"', localization_dictionary)
 assert len(keys) == len(set(keys)), "duplicate localization key"
 localized_keys = set(keys)
+for language_key in ("English", "Arabic", "Refresh", "Newest", "Oldest", "Largest", "Smallest"):
+    assert language_key in localized_keys, f"missing language-isolated UI key: {language_key}"
 structural_formats = {" • ", "%@ %@", "%@ %lu", "%@ • %@", "%@ • %@\\n%@"}
 short_ui_words = {"Today", "Yesterday", "Share", "Missing", "Result", "Held", "Backup", "Standard", "Encrypted"}
 for literal in set(re.findall(r'@"((?:\\.|[^"\\])*)"', view_controller_text)):
@@ -241,6 +268,18 @@ for literal in (
     "Continue",
 ):
     assert literal in localized_keys, f"unlocalized startup notice text: {literal}"
+
+# The selected app language, not the device language, must control direction on
+# every switch. Repeating the sequence guards against stale one-way state.
+def selected_direction(app_language, system_language):
+    del system_language
+    return "rtl" if app_language == "ar" else "ltr"
+
+for system_language in ("ar", "en"):
+    assert selected_direction("en", system_language) == "ltr"
+    assert selected_direction("ar", system_language) == "rtl"
+sequence = ["en", "ar", "en", "ar", "en"]
+assert [selected_direction(language, "ar") for language in sequence] == ["ltr", "rtl", "ltr", "rtl", "ltr"]
 error_literals = set()
 for source_name in ("ATMCore.m", "ATMBackupManager.m", "ATMRestorePlanner.m", "ATMZipWriter.m"):
     source = (ROOT / "Core" / source_name).read_text()

@@ -26,8 +26,9 @@ static NSString *const ATMExperimentalNoticeLastBuildKey = @"ATMExperimentalNoti
     self.window = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
     self.window.tintColor = accent;
     self.window.rootViewController = ATMCreateRootController();
-    self.window.semanticContentAttribute = ATMIsArabicLanguage() ? UISemanticContentAttributeForceRightToLeft : UISemanticContentAttributeForceLeftToRight;
+    ATMApplyLanguageDirectionToWindow(self.window);
     [self.window makeKeyAndVisible];
+    dispatch_async(dispatch_get_main_queue(), ^{ ATMApplyLanguageDirectionToWindow(self.window); });
     return YES;
 }
 
@@ -61,7 +62,8 @@ static NSString *const ATMExperimentalNoticeLastBuildKey = @"ATMExperimentalNoti
     };
     [notice addAction:[UIAlertAction actionWithTitle:@"Contact Developer" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) { acceptNotice(YES); }]];
     [notice addAction:[UIAlertAction actionWithTitle:@"Continue" style:UIAlertActionStyleCancel handler:^(__unused UIAlertAction *action) { acceptNotice(NO); }]];
-    [self.window.rootViewController presentViewController:notice animated:YES completion:nil];
+    ATMApplyLanguageDirectionToViewController(notice);
+    [self.window.rootViewController presentViewController:notice animated:YES completion:^{ ATMApplyLanguageDirectionToViewController(notice); }];
     return YES;
 }
 

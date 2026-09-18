@@ -21,7 +21,7 @@ NSString *ATMLanguageCode(void) {
 BOOL ATMIsArabicLanguage(void) { return [ATMLanguageCode() isEqualToString:@"ar"]; }
 
 NSLocale *ATMSelectedLocale(void) {
-    return [NSLocale localeWithLocaleIdentifier:ATMIsArabicLanguage() ? @"ar_AE" : @"en_US"];
+    return [NSLocale localeWithLocaleIdentifier:ATMIsArabicLanguage() ? @"ar_AE" : @"en_US_POSIX"];
 }
 
 void ATMSetLanguageCode(NSString *languageCode) {
@@ -41,6 +41,13 @@ static NSDictionary<NSString *, NSString *> *ATMArabicStrings(void) {
             @"Sources": @"المصادر",
             @"Reports": @"التقارير",
             @"Settings": @"الإعدادات",
+            @"English": @"الإنجليزية",
+            @"Arabic": @"العربية",
+            @"Refresh": @"تحديث",
+            @"Newest": @"الأحدث",
+            @"Oldest": @"الأقدم",
+            @"Largest": @"الأكبر",
+            @"Smallest": @"الأصغر",
             @"Done": @"تم",
             @"OK": @"حسنًا",
             @"Cancel": @"إلغاء",
@@ -330,8 +337,6 @@ static NSDictionary<NSString *, NSString *> *ATMArabicStrings(void) {
             @"Clear Report State?": @"مسح حالة التقرير؟",
             @"This clears current Backup, Import, and Restore report results. Backups, Package Vault items, selections, sources, and activity history are not deleted.": @"سيُمسح التقرير الحالي فقط، دون حذف أي نسخة أو اختيار.",
             @"Language": @"اللغة",
-            @"English": @"English",
-            @"Arabic": @"العربية",
             @"Choose Language": @"اختر اللغة",
             @"Package List": @"قائمة الحزم",
             @"Shown Packages": @"الحزم المعروضة",
@@ -470,6 +475,22 @@ NSString *ATMLocalizedDateString(NSDate *date, NSDateFormatterStyle dateStyle, N
     return [formatter stringFromDate:date];
 }
 
+NSString *ATMLocalizedByteCountString(long long byteCount) {
+    static NSArray<NSString *> *units;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{ units = @[@"B", @"KB", @"MB", @"GB", @"TB"]; });
+    double value = MAX(0, byteCount);
+    NSUInteger unit = 0;
+    while (value >= 1000.0 && unit + 1 < units.count) { value /= 1000.0; unit++; }
+    NSNumberFormatter *formatter = [NSNumberFormatter new];
+    formatter.locale = ATMSelectedLocale();
+    formatter.numberStyle = NSNumberFormatterDecimalStyle;
+    formatter.minimumFractionDigits = 0;
+    formatter.maximumFractionDigits = value < 10.0 && unit > 0 ? 1 : 0;
+    NSString *number = [formatter stringFromNumber:@(value)] ?: [NSString stringWithFormat:@"%.0f", value];
+    return [NSString stringWithLocalizedFormat:@"%@ %@", ATMBidiIsolatedString(number), ATMLTRIsolatedString(units[unit])];
+}
+
 static NSString *ATMFormatWithIsolatedNumbers(NSString *format) {
     if (!ATMIsArabicLanguage() || ![format containsString:@"%"]) return format;
     NSMutableString *result = [NSMutableString string];
@@ -504,7 +525,7 @@ NSString *ATMLocalizedFormat(NSString *format, ...) {
     va_list arguments;
     va_start(arguments, format);
     NSString *localizedFormat = ATMFormatWithIsolatedNumbers(ATMLocalizedString(format) ?: format);
-    NSString *result = [[NSString alloc] initWithFormat:localizedFormat arguments:arguments];
+    NSString *result = [[NSString alloc] initWithFormat:localizedFormat locale:ATMSelectedLocale() arguments:arguments];
     va_end(arguments);
     return result;
 }
@@ -514,7 +535,7 @@ NSString *ATMLocalizedFormat(NSString *format, ...) {
     va_list arguments;
     va_start(arguments, format);
     NSString *localizedFormat = ATMFormatWithIsolatedNumbers(ATMLocalizedString(format) ?: format);
-    NSString *result = [[NSString alloc] initWithFormat:localizedFormat arguments:arguments];
+    NSString *result = [[NSString alloc] initWithFormat:localizedFormat locale:ATMSelectedLocale() arguments:arguments];
     va_end(arguments);
     return result;
 }
@@ -585,6 +606,134 @@ static void ATMSwapClass(Class cls, SEL original, SEL replacement) {
 - (void)atm_setPrompt:(NSString *)prompt { [self atm_setPrompt:ATMLocalizedString(prompt)]; }
 @end
 
+UISemanticContentAttribute ATMLanguageSemanticContentAttribute(void) {
+    return ATMIsArabicLanguage() ? UISemanticContentAttributeForceRightToLeft : UISemanticContentAttributeForceLeftToRight;
+}
+
+NSTextAlignment ATMLanguageTextAlignment(void) {
+    return ATMIsArabicLanguage() ? NSTextAlignmentRight : NSTextAlignmentLeft;
+}
+
+static BOOL ATMTextRequiresLTRAlignment(NSString *text) {
+    if (!text.length) return NO;
+    unichar first = [text characterAtIndex:0];
+    if (first == 0x2066) return YES;
+    NSString *plain = [text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    return [plain hasPrefix:@"http://"] || [plain hasPrefix:@"https://"] || [plain hasPrefix:@"@"] || [plain hasPrefix:@"com."] || [plain hasPrefix:@"org."] || [plain hasPrefix:@"net."];
+}
+
+static void ATMApplyTextAlignment(UIView *view) {
+    if ([view isKindOfClass:UILabel.class]) {
+        UILabel *label = (UILabel *)view;
+        if (label.textAlignment != NSTextAlignmentCenter && label.textAlignment != NSTextAlignmentJustified) {
+            NSTextAlignment alignment = ATMIsArabicLanguage() && !ATMTextRequiresLTRAlignment(label.text) ? NSTextAlignmentRight : NSTextAlignmentLeft;
+            if (label.textAlignment != alignment) label.textAlignment = alignment;
+        }
+    } else if ([view isKindOfClass:UITextField.class]) {
+        UITextField *field = (UITextField *)view;
+        NSTextAlignment alignment = ATMLanguageTextAlignment();
+        if (field.textAlignment != NSTextAlignmentCenter && field.textAlignment != alignment) field.textAlignment = alignment;
+    } else if ([view isKindOfClass:UITextView.class]) {
+        UITextView *textView = (UITextView *)view;
+        NSTextAlignment alignment = ATMLanguageTextAlignment();
+        if (textView.textAlignment != NSTextAlignmentCenter && textView.textAlignment != NSTextAlignmentJustified && textView.textAlignment != alignment) textView.textAlignment = alignment;
+    }
+}
+
+static BOOL ATMViewIsInsideSearchBar(UIView *view) {
+    UIView *cursor = view.superview;
+    while (cursor) {
+        if ([cursor isKindOfClass:UISearchBar.class]) return YES;
+        cursor = cursor.superview;
+    }
+    return NO;
+}
+
+void ATMApplyLanguageDirectionToView(UIView *view) {
+    if (!view) return;
+    UISemanticContentAttribute direction = ATMLanguageSemanticContentAttribute();
+    if (view.semanticContentAttribute != direction) view.semanticContentAttribute = direction;
+    if ([view isKindOfClass:UILabel.class]) {
+        ((UILabel *)view).adjustsFontForContentSizeCategory = YES;
+    } else if ([view isKindOfClass:UITableView.class]) {
+        UITableView *table = (UITableView *)view;
+        table.rowHeight = UITableViewAutomaticDimension;
+        table.estimatedRowHeight = 62.0;
+        if (@available(iOS 15.0, *)) table.sectionHeaderTopPadding = 12.0;
+    } else if ([view isKindOfClass:UITableViewCell.class]) {
+        UITableViewCell *cell = (UITableViewCell *)view;
+        cell.preservesSuperviewLayoutMargins = YES;
+        cell.directionalLayoutMargins = NSDirectionalEdgeInsetsMake(11.0, 16.0, 11.0, 16.0);
+        cell.textLabel.numberOfLines = 2;
+        cell.detailTextLabel.numberOfLines = 0;
+    } else if ([view isKindOfClass:UIButton.class] && ATMViewIsInsideSearchBar(view)) {
+        UIButton *button = (UIButton *)view;
+        if ([button titleForState:UIControlStateNormal].length) [button setTitle:ATMLocalizedString(@"Cancel") forState:UIControlStateNormal];
+    }
+    ATMApplyTextAlignment(view);
+    for (UIView *subview in view.subviews) ATMApplyLanguageDirectionToView(subview);
+}
+
+void ATMApplyLanguageDirectionToViewController(UIViewController *controller) {
+    if (!controller) return;
+    if (controller.isViewLoaded) ATMApplyLanguageDirectionToView(controller.view);
+    if ([controller isKindOfClass:UINavigationController.class]) {
+        UINavigationController *navigation = (UINavigationController *)controller;
+        ATMApplyLanguageDirectionToView(navigation.navigationBar);
+    }
+    if ([controller isKindOfClass:UITabBarController.class]) {
+        UITabBarController *tabs = (UITabBarController *)controller;
+        ATMApplyLanguageDirectionToView(tabs.tabBar);
+    }
+    for (UIViewController *child in controller.childViewControllers) ATMApplyLanguageDirectionToViewController(child);
+    if (controller.presentedViewController) ATMApplyLanguageDirectionToViewController(controller.presentedViewController);
+}
+
+void ATMApplyLanguageDirectionToWindow(UIWindow *window) {
+    if (!window) return;
+    window.semanticContentAttribute = ATMLanguageSemanticContentAttribute();
+    ATMApplyLanguageDirectionToView(window);
+    ATMApplyLanguageDirectionToViewController(window.rootViewController);
+}
+
+@interface UIViewController (ATMLanguageDirection)
+- (void)atm_viewDidLayoutSubviews;
+@end
+@implementation UIViewController (ATMLanguageDirection)
+- (void)atm_viewDidLayoutSubviews {
+    [self atm_viewDidLayoutSubviews];
+    ATMApplyLanguageDirectionToViewController(self);
+}
+@end
+
+@interface UISearchBar (ATMLocalization)
+- (void)atm_setPlaceholder:(NSString *)placeholder;
+@end
+@implementation UISearchBar (ATMLocalization)
+- (void)atm_setPlaceholder:(NSString *)placeholder { [self atm_setPlaceholder:ATMLocalizedString(placeholder)]; }
+@end
+
+@interface UIBarButtonItem (ATMLocalization)
+- (void)atm_setTitle:(NSString *)title;
+@end
+@implementation UIBarButtonItem (ATMLocalization)
+- (void)atm_setTitle:(NSString *)title { [self atm_setTitle:ATMLocalizedString(title)]; }
+@end
+
+@interface UITabBarItem (ATMLocalization)
+- (void)atm_setTitle:(NSString *)title;
+@end
+@implementation UITabBarItem (ATMLocalization)
+- (void)atm_setTitle:(NSString *)title { [self atm_setTitle:ATMLocalizedString(title)]; }
+@end
+
+@interface UISegmentedControl (ATMLocalization)
+- (void)atm_setTitle:(NSString *)title forSegmentAtIndex:(NSUInteger)segment;
+@end
+@implementation UISegmentedControl (ATMLocalization)
+- (void)atm_setTitle:(NSString *)title forSegmentAtIndex:(NSUInteger)segment { [self atm_setTitle:ATMLocalizedString(title) forSegmentAtIndex:segment]; }
+@end
+
 void ATMInstallLocalization(void) {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
@@ -593,6 +742,11 @@ void ATMInstallLocalization(void) {
         ATMSwap(UITextField.class, @selector(setPlaceholder:), @selector(atm_setPlaceholder:));
         ATMSwap(UIButton.class, @selector(setTitle:forState:), @selector(atm_setTitle:forState:));
         ATMSwap(UINavigationItem.class, @selector(setPrompt:), @selector(atm_setPrompt:));
+        ATMSwap(UIViewController.class, @selector(viewDidLayoutSubviews), @selector(atm_viewDidLayoutSubviews));
+        ATMSwap(UISearchBar.class, @selector(setPlaceholder:), @selector(atm_setPlaceholder:));
+        ATMSwap(UIBarButtonItem.class, @selector(setTitle:), @selector(atm_setTitle:));
+        ATMSwap(UITabBarItem.class, @selector(setTitle:), @selector(atm_setTitle:));
+        ATMSwap(UISegmentedControl.class, @selector(setTitle:forSegmentAtIndex:), @selector(atm_setTitle:forSegmentAtIndex:));
         ATMSwapClass(UIAlertController.class, @selector(alertControllerWithTitle:message:preferredStyle:), @selector(atm_alertControllerWithTitle:message:preferredStyle:));
         ATMSwapClass(UIAlertAction.class, @selector(actionWithTitle:style:handler:), @selector(atm_actionWithTitle:style:handler:));
     });
