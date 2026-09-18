@@ -20,6 +20,10 @@ NSString *ATMLanguageCode(void) {
 
 BOOL ATMIsArabicLanguage(void) { return [ATMLanguageCode() isEqualToString:@"ar"]; }
 
+NSLocale *ATMSelectedLocale(void) {
+    return [NSLocale localeWithLocaleIdentifier:ATMIsArabicLanguage() ? @"ar_AE" : @"en_US"];
+}
+
 void ATMSetLanguageCode(NSString *languageCode) {
     NSString *normalized = [languageCode isEqualToString:@"ar"] ? @"ar" : @"en";
     [ATMSharedDefaults() setObject:normalized forKey:ATMLanguageDefaultsKey];
@@ -41,6 +45,9 @@ static NSDictionary<NSString *, NSString *> *ATMArabicStrings(void) {
             @"OK": @"حسنًا",
             @"Cancel": @"إلغاء",
             @"Continue": @"متابعة",
+            @"Experimental Version": @"نسخة تجريبية",
+            @"AAZ Tweak Manager is experimental. If you find a problem, contact the developer on X: %@": @"مدير تعديلات AAZ أداة تجريبية. إذا واجهت مشكلة، تواصل مع المطور على X: %@",
+            @"Contact Developer": @"التواصل مع المطور",
             @"Delete": @"حذف",
             @"Rename": @"إعادة تسمية",
             @"Duplicate": @"نسخ",
@@ -263,6 +270,17 @@ static NSDictionary<NSString *, NSString *> *ATMArabicStrings(void) {
             @"Copy Report": @"نسخ التقرير",
             @"Clear Report State": @"مسح حالة التقرير",
             @"No current result": @"لا توجد نتيجة حالية",
+            @"Healthy": @"سليم",
+            @"Incomplete": @"غير مكتمل",
+            @"Failed": @"فشل",
+            @"Cancelled": @"ملغى",
+            @"Preparing": @"قيد التجهيز",
+            @"Restore Test Pending": @"اختبار الاستعادة معلّق",
+            @"Current Results Available": @"النتائج الحالية متاحة",
+            @"completed": @"مكتمل",
+            @"failed": @"فشل",
+            @"in-progress": @"قيد التنفيذ",
+            @"not-run": @"لم يُنفذ",
             @"Share the single current-build report": @"مشاركة التقرير الحالي",
             @"Copy the same report text": @"نسخ التقرير نفسه",
             @"Clears report results only": @"يمسح نتائج التقرير فقط",
@@ -369,6 +387,7 @@ static NSDictionary<NSString *, NSString *> *ATMArabicStrings(void) {
             @"No personal packages are selected.": @"لا توجد حزم شخصية محددة.",
             @"Password key derivation failed.": @"تعذر تجهيز مفتاح كلمة المرور.",
             @"Safe system check failed at preflight-workspace. No package or source data was changed.": @"فشل فحص النظام دون تغيير الحزم أو المصادر.",
+            @"Safe system check failed. No package or source data was changed. Open Reports for the safe failure stage.": @"فشل فحص النظام دون تغيير الحزم أو المصادر. افتح التقارير لمعرفة مرحلة التوقف الآمنة.",
             @"Secure random data is unavailable.": @"البيانات العشوائية الآمنة غير متاحة.",
             @"Select a backup file, not a folder.": @"اختر ملف نسخة، وليس مجلدًا.",
             @"The backup archive could not be validated and was not imported.": @"تعذر التحقق من النسخة ولم تُستورد.",
@@ -427,10 +446,64 @@ NSString *ATMLocalizedString(NSString *text) {
     return ATMArabicStrings()[text] ?: text;
 }
 
+static NSString *ATMIsolatedString(id value, unichar openingMark) {
+    NSString *text = nil;
+    if ([value isKindOfClass:NSString.class]) text = value;
+    else if (value) text = [value description];
+    if (!text.length) return @"";
+    unichar first = [text characterAtIndex:0], last = [text characterAtIndex:text.length - 1];
+    if ((first == 0x2066 || first == 0x2067 || first == 0x2068) && last == 0x2069) return text;
+    return [NSString stringWithFormat:@"%C%@%C", openingMark, text, (unichar)0x2069];
+}
+
+NSString *ATMBidiIsolatedString(id value) { return ATMIsolatedString(value, 0x2068); }
+NSString *ATMLTRIsolatedString(id value) { return ATMIsolatedString(value, 0x2066); }
+
+NSString *ATMLocalizedDateString(NSDate *date, NSDateFormatterStyle dateStyle, NSDateFormatterStyle timeStyle) {
+    if (!date) return ATMLocalizedString(@"Date unknown");
+    NSDateFormatter *formatter = [NSDateFormatter new];
+    formatter.locale = ATMSelectedLocale();
+    formatter.calendar = [[NSCalendar alloc] initWithCalendarIdentifier:NSCalendarIdentifierGregorian];
+    formatter.timeZone = NSTimeZone.localTimeZone;
+    formatter.dateStyle = dateStyle;
+    formatter.timeStyle = timeStyle;
+    return [formatter stringFromDate:date];
+}
+
+static NSString *ATMFormatWithIsolatedNumbers(NSString *format) {
+    if (!ATMIsArabicLanguage() || ![format containsString:@"%"]) return format;
+    NSMutableString *result = [NSMutableString string];
+    NSCharacterSet *numericConversions = [NSCharacterSet characterSetWithCharactersInString:@"diuoxXfFeEgGaAc"];
+    NSUInteger length = format.length;
+    for (NSUInteger index = 0; index < length; index++) {
+        unichar character = [format characterAtIndex:index];
+        if (character != '%' || index + 1 >= length || [format characterAtIndex:index + 1] == '%') {
+            [result appendFormat:@"%C", character];
+            if (character == '%' && index + 1 < length && [format characterAtIndex:index + 1] == '%') {
+                [result appendString:@"%"]; index++;
+            }
+            continue;
+        }
+        NSUInteger end = index + 1;
+        while (end < length && ![numericConversions characterIsMember:[format characterAtIndex:end]] && [format characterAtIndex:end] != '@') end++;
+        if (end >= length) { [result appendString:[format substringFromIndex:index]]; break; }
+        NSString *specifier = [format substringWithRange:NSMakeRange(index, end - index + 1)];
+        BOOL numeric = [numericConversions characterIsMember:[format characterAtIndex:end]];
+        if (numeric) [result appendFormat:@"%C%@", (unichar)0x2066, specifier];
+        else [result appendString:specifier];
+        index = end;
+        if (numeric && index + 2 < length && [format characterAtIndex:index + 1] == '%' && [format characterAtIndex:index + 2] == '%') {
+            [result appendString:@"%%"]; index += 2;
+        }
+        if (numeric) [result appendFormat:@"%C", (unichar)0x2069];
+    }
+    return result;
+}
+
 NSString *ATMLocalizedFormat(NSString *format, ...) {
     va_list arguments;
     va_start(arguments, format);
-    NSString *localizedFormat = ATMLocalizedString(format) ?: format;
+    NSString *localizedFormat = ATMFormatWithIsolatedNumbers(ATMLocalizedString(format) ?: format);
     NSString *result = [[NSString alloc] initWithFormat:localizedFormat arguments:arguments];
     va_end(arguments);
     return result;
@@ -440,7 +513,7 @@ NSString *ATMLocalizedFormat(NSString *format, ...) {
 + (instancetype)stringWithLocalizedFormat:(NSString *)format, ... {
     va_list arguments;
     va_start(arguments, format);
-    NSString *localizedFormat = ATMLocalizedString(format) ?: format;
+    NSString *localizedFormat = ATMFormatWithIsolatedNumbers(ATMLocalizedString(format) ?: format);
     NSString *result = [[NSString alloc] initWithFormat:localizedFormat arguments:arguments];
     va_end(arguments);
     return result;

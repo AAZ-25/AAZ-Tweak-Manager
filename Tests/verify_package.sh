@@ -19,7 +19,7 @@ case "$phase" in
   metadata)
     test -f "$deb"
     test "$(dpkg-deb -f "$deb" Package)" = "com.aaz.tweakmanager"
-    test "$(dpkg-deb -f "$deb" Version)" = "0.1.0~beta53"
+    test "$(dpkg-deb -f "$deb" Version)" = "0.1.0~beta54"
     test "$(dpkg-deb -f "$deb" Architecture)" = "iphoneos-arm64"
     dpkg-deb -c "$deb" > "$package_list"
     ;;
@@ -83,10 +83,10 @@ assert extension_entitlements == {
     "application-identifier": "com.aaz.tweakmanager.importer",
     "com.apple.security.application-groups": ["group.com.aaz.tweakmanager"],
 }
-assert app_info["CFBundleVersion"] == "53"
+assert app_info["CFBundleVersion"] == "54"
 assert "CFBundleDocumentTypes" not in app_info
 assert extension_info["CFBundleIdentifier"] == "com.aaz.tweakmanager.importer"
-assert extension_info["CFBundleVersion"] == "53"
+assert extension_info["CFBundleVersion"] == "54"
 definition = extension_info["NSExtension"]
 assert definition["NSExtensionPointIdentifier"] == "com.apple.share-services"
 assert definition["NSExtensionPrincipalClass"] == "AAZShareViewController"
@@ -111,6 +111,10 @@ PY
     grep -Fq 'Save %lu selected package' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'ATMLanguage' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'Choose Language' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'Experimental Version' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'Contact Developer' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'ATMExperimentalNoticeLastBuild' "$RUNNER_TEMP/aaz-app.strings"
+    grep -Fq 'AAZ Tweak Manager is experimental.' "$RUNNER_TEMP/aaz-app.strings"
     grep -Fq 'ATMLanguage' "$RUNNER_TEMP/aaz-extension.strings"
     grep -Fq 'Could not prepare this file.' "$RUNNER_TEMP/aaz-extension.strings"
     grep -Fq 'Selection Updated' "$RUNNER_TEMP/aaz-app.strings"

@@ -35,7 +35,7 @@ with (ROOT / "Resources/Info.plist").open("rb") as handle:
     info = plistlib.load(handle)
 assert info["CFBundleIdentifier"] == "com.aaz.tweakmanager"
 assert info["MinimumOSVersion"] == "15.0"
-assert info["CFBundleVersion"] == "53"
+assert info["CFBundleVersion"] == "54"
 assert info["LSSupportsOpeningDocumentsInPlace"] is False
 assert "CFBundleDocumentTypes" not in info
 
@@ -55,7 +55,7 @@ assert info["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconFiles"] == ["Ap
 with (ROOT / "Extension/Resources/Info.plist").open("rb") as handle:
     extension_info = plistlib.load(handle)
 assert extension_info["CFBundleIdentifier"] == "com.aaz.tweakmanager.importer"
-assert extension_info["CFBundleVersion"] == "53"
+assert extension_info["CFBundleVersion"] == "54"
 assert extension_info["CFBundlePackageType"] == "XPC!"
 extension_definition = extension_info["NSExtension"]
 assert extension_definition["NSExtensionPointIdentifier"] == "com.apple.share-services"
@@ -73,7 +73,7 @@ assert extension_entitlements == {
 control = (ROOT / "control").read_text()
 assert "Package: com.aaz.tweakmanager" in control
 assert "Architecture: iphoneos-arm64" in control
-assert "Version: 0.1.0~beta53" in control
+assert "Version: 0.1.0~beta54" in control
 assert "Priority: optional" in control
 assert "Depends: firmware (>= 15.0), coreutils, diffutils, dpkg, tar" in control
 
@@ -165,6 +165,7 @@ assert "importDebugEnabled=%@" in all_text
 assert "importTraceFormat=1" in all_text
 assert "importDebugPrivacy=fixed-stage-labels-only" in all_text
 view_controller_text = (ROOT / "App/ATMViewControllers.m").read_text()
+app_delegate_text = (ROOT / "App/ATMAppDelegate.m").read_text()
 assert (ROOT / "App/ATMViewControllers.h").is_file()
 extension_text = (ROOT / "Extension/ShareViewController.m").read_text()
 makefile_text = (ROOT / "Makefile").read_text()
@@ -190,11 +191,27 @@ assert "ATMInstallLocalization();" in extension_text
 assert "ATMLanguageDefaultsKey" in localization_text
 assert 'return [preferred hasPrefix:@"ar"] ? @"ar" : @"en";' in localization_text
 assert "UISemanticContentAttributeForceRightToLeft" in all_text
+assert 'localeWithLocaleIdentifier:ATMIsArabicLanguage() ? @"ar_AE" : @"en_US"' in localization_text
+assert "NSCalendarIdentifierGregorian" in localization_text
+assert "ATMFormatWithIsolatedNumbers" in localization_text
+assert "ATMBidiIsolatedString" in localization_text
+assert "ATMLTRIsolatedString" in localization_text
+assert "0x2066" in localization_text and "0x2068" in localization_text and "0x2069" in localization_text
+assert "static NSDateFormatter" not in view_controller_text
+assert view_controller_text.count("ATMLocalizedDateString") >= 4
+assert view_controller_text.count("ATMTechnicalValue") >= 20
+assert "ATMEnglishPluralSuffix" in view_controller_text
 assert '@"Choose Language"' in view_controller_text
 assert '[self applyLanguage:@"ar"]' in view_controller_text
 assert '[self applyLanguage:@"en"]' in view_controller_text
 assert "مدير تعديلات AAZ" in localization_text
 assert "جارٍ تجهيز الملف" in localization_text
+assert "ATMExperimentalNoticeLastBuild" in app_delegate_text
+assert "presentExperimentalNoticeIfNeeded" in app_delegate_text
+assert "stringForKey:ATMExperimentalNoticeLastBuildKey" in app_delegate_text
+assert "setObject:build forKey:ATMExperimentalNoticeLastBuildKey" in app_delegate_text
+assert "ATMLTRIsolatedString(@\"@_kkk2\")" in app_delegate_text
+assert "https://x.com/_kkk2" in app_delegate_text
 localization_dictionary = localization_text.split("strings = @{", 1)[1].split("        };", 1)[0]
 arabic_pairs = re.findall(r'@"(?:\\.|[^"\\])*"\s*:\s*@"((?:\\.|[^"\\])*)"', localization_dictionary)
 assert len(arabic_pairs) >= 180
@@ -217,6 +234,13 @@ for literal in (
     "Could not prepare this file.",
 ):
     assert literal in localized_keys, f"unlocalized Share Extension text: {literal}"
+for literal in (
+    "Experimental Version",
+    "AAZ Tweak Manager is experimental. If you find a problem, contact the developer on X: %@",
+    "Contact Developer",
+    "Continue",
+):
+    assert literal in localized_keys, f"unlocalized startup notice text: {literal}"
 error_literals = set()
 for source_name in ("ATMCore.m", "ATMBackupManager.m", "ATMRestorePlanner.m", "ATMZipWriter.m"):
     source = (ROOT / "Core" / source_name).read_text()
@@ -226,6 +250,8 @@ for source_name in ("ATMCore.m", "ATMBackupManager.m", "ATMRestorePlanner.m", "A
 for literal in error_literals:
     assert literal in localized_keys, f"unlocalized user-facing error: {literal}"
 assert "## English" in readme_text and "## العربية" in readme_text
+assert "This is experimental software." in readme_text
+assert "هذه أداة تجريبية." in readme_text
 assert len(readme_text.splitlines()) <= 100
 for internal_term in ("synthetic", "CRC", "footer", "staging", "persona-based", "preflight"):
     assert internal_term.lower() not in readme_text.lower(), f"visitor README exposes internal detail: {internal_term}"

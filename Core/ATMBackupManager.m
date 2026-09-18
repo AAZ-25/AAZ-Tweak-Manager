@@ -875,7 +875,7 @@ static NSData *ATMDecryptArchive(NSData *container, NSString *password, NSError 
     [NSFileManager.defaultManager removeItemAtURL:encryptedProbe error:nil];
     [NSFileManager.defaultManager removeItemAtURL:root error:nil];
     if (!passed && failureStage.length && ![observedStages containsObject:failureStage]) [observedStages addObject:failureStage];
-    if (!passed && error) *error = ATMBackupError(91, [NSString stringWithFormat:@"Safe system check failed at %@. No package or source data was changed.", failureStage ?: @"preflight-unknown"]);
+    if (!passed && error) *error = ATMBackupError(91, @"Safe system check failed. No package or source data was changed. Open Reports for the safe failure stage.");
     return @{ @"passed": @(passed), @"stage": passed ? @"preflight-complete" : (failureStage ?: @"preflight-unknown"), @"stages": observedStages, @"privacy": @"fixed-stage-labels-only" };
 }
 

@@ -2,6 +2,8 @@
 
 Private, portable backups for Rootless jailbreak tweaks and sources.
 
+This is experimental software. Report problems to [@_kkk2](https://x.com/_kkk2).
+
 [English](#english) · [العربية](#العربية)
 
 ## English
@@ -43,6 +45,8 @@ Rootful and roothide are not supported.
 ## العربية
 
 نسخ احتياطية خاصة ومحمولة لتعديلات ومصادر الجيلبريك بنظام Rootless.
+
+هذه أداة تجريبية. للإبلاغ عن المشاكل تواصل مع [@_kkk2](https://x.com/_kkk2).
 
 ### المميزات
 
