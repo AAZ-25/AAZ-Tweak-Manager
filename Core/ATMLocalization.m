@@ -27,6 +27,7 @@ NSLocale *ATMSelectedLocale(void) {
 void ATMSetLanguageCode(NSString *languageCode) {
     NSString *normalized = [languageCode isEqualToString:@"ar"] ? @"ar" : @"en";
     [ATMSharedDefaults() setObject:normalized forKey:ATMLanguageDefaultsKey];
+    ATMConfigureLanguageAppearance();
     [NSNotificationCenter.defaultCenter postNotificationName:ATMLanguageDidChangeNotification object:nil];
 }
 
@@ -610,6 +611,18 @@ UISemanticContentAttribute ATMLanguageSemanticContentAttribute(void) {
     return ATMIsArabicLanguage() ? UISemanticContentAttributeForceRightToLeft : UISemanticContentAttributeForceLeftToRight;
 }
 
+void ATMConfigureLanguageAppearance(void) {
+    UISemanticContentAttribute direction = ATMLanguageSemanticContentAttribute();
+    UIView.appearance.semanticContentAttribute = direction;
+    UINavigationBar.appearance.semanticContentAttribute = direction;
+    UITabBar.appearance.semanticContentAttribute = direction;
+    UITableView.appearance.semanticContentAttribute = direction;
+    UITableViewCell.appearance.semanticContentAttribute = direction;
+    UISearchBar.appearance.semanticContentAttribute = direction;
+    UITextField.appearance.semanticContentAttribute = direction;
+    UITextView.appearance.semanticContentAttribute = direction;
+}
+
 NSTextAlignment ATMLanguageTextAlignment(void) {
     return ATMIsArabicLanguage() ? NSTextAlignmentRight : NSTextAlignmentLeft;
 }
@@ -724,6 +737,7 @@ void ATMApplyLanguageDirectionToWindow(UIWindow *window) {
 @end
 
 void ATMInstallLocalization(void) {
+    ATMConfigureLanguageAppearance();
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         ATMSwap(UIViewController.class, @selector(setTitle:), @selector(atm_setTitle:));

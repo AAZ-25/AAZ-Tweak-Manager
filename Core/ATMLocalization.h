@@ -17,6 +17,7 @@ NSString *ATMBidiIsolatedString(id _Nullable value);
 NSString *ATMLTRIsolatedString(id _Nullable value);
 UISemanticContentAttribute ATMLanguageSemanticContentAttribute(void);
 NSTextAlignment ATMLanguageTextAlignment(void);
+void ATMConfigureLanguageAppearance(void);
 void ATMApplyLanguageDirectionToView(UIView *view);
 void ATMApplyLanguageDirectionToViewController(UIViewController *controller);
 void ATMApplyLanguageDirectionToWindow(UIWindow *window);
