@@ -1,6 +1,6 @@
 # Third-Party References
 
-AAZ Tweak Manager is implemented independently. No third-party implementation source or binary is copied or bundled in the project.
+AAZ Tweak Manager is implemented independently. No third-party implementation source or executable binary is copied or bundled in the project.
 
 ## Research references
 
